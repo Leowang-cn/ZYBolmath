@@ -19,6 +19,4 @@ COPY scripts ./scripts
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 RUN mkdir -p data/assets
 EXPOSE 8910
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('PORT', '8910') + '/api/health', timeout=3)"
-ENTRYPOINT ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-8910} --workers 2 --threads 4 app:app"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-8910} --workers 2 --threads 4 app:app"]
