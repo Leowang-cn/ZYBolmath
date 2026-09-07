@@ -1,0 +1,12 @@
+.git
+.github
+.downloads
+.venv*
+data
+node_modules
+frontend/dist
+__pycache__
+*.pyc
+.DS_Store
+docs
+tests
