@@ -27,11 +27,12 @@
 /usr/local/node24/bin/npm ci
 /usr/local/node24/bin/npm run build
 /usr/local/python3.12/bin/python3.12 -m pip install -r requirements.txt
+CHROMIUM_EXECUTABLE_PATH=/path/to/chromium \
 PORT=8910 SECRET_KEY='生产随机密钥' EDITOR_PASSWORD='编辑密码' \
   /usr/local/python3.12/bin/gunicorn --bind 0.0.0.0:8910 --workers 2 --threads 4 app:app
 ```
 
-完整环境变量见 [.env.example](.env.example)。生产环境必须设置固定的 `SECRET_KEY` 和强 `EDITOR_PASSWORD`；HTTPS 部署时设置 `COOKIE_SECURE=1`。健康检查为 `GET /api/health`。
+完整环境变量见 [.env.example](.env.example)。生产环境必须设置固定的 `SECRET_KEY` 和强 `EDITOR_PASSWORD`；HTTPS 部署时设置 `COOKIE_SECURE=1`。健康检查为 `GET /api/health`。Docker 镜像会安装与 Python Playwright 匹配的 Chromium；CentOS 7 宿主机部署应由运维提供可运行的 Chrome/Chromium，并通过 `CHROMIUM_EXECUTABLE_PATH` 指定，避免系统 glibc 与 Playwright 内置浏览器不兼容。
 
 ### 首次部署数据
 
@@ -47,11 +48,20 @@ PORT=8910 SECRET_KEY='生产随机密钥' EDITOR_PASSWORD='编辑密码' \
 
 ### 后续更新题库
 
-1. 导出新版 XLSX，使用上述同步命令生成新的 `ZYBolmath-data.tar.gz`。
-2. 在页面点击“编辑登录”，输入 `EDITOR_PASSWORD`。
-3. 点击工具栏的“更新题库”，选择新压缩包并点击“验证并更新”。
+在服务器配置 `DINGTALK_DOCUMENT_URL`、`BROWSER_PROFILE_PATH` 和浏览器，并使用 `ASSET_BACKEND=local` 后，管理员可直接更新：
+
+1. 在页面点击“编辑登录”，输入 `EDITOR_PASSWORD`。
+2. 点击工具栏的“更新题库”。
+3. 点击“从钉钉更新”，页面会显示登录检查、表格与图片解析、数据校验和安装进度。
+
+浏览器 Profile 使用有权查看并导出该文档的钉钉账号登录。每次任务仍会重新检查登录、文档访问和 Excel 导出权限，并分别报告登录超时、无查看权限、无导出权限、下载异常或数据校验失败。只有查看权限但没有导出权限时任务会停止，不会通过页面抓取或其他方式绕过限制。
+首次运行或登录失效时，管理员更新窗口会显示服务器 Chromium 生成的钉钉登录二维码。使用钉钉扫码后任务会在同一浏览器会话中自动继续，登录状态保存在 `BROWSER_PROFILE_PATH`，不需要服务器终端或远程桌面。生产环境必须为 `data/` 配置持久化存储，否则重新部署后需要再次扫码。
+
+若自动导出暂时不可用，仍可在同一弹窗中上传离线数据包：手工导出新版 XLSX，使用“数据同步”命令生成 `ZYBolmath-data.tar.gz`，选择压缩包并点击“上传并更新”。
 
 更新期间服务端会校验并备份当前数据；更新失败会保留旧题库。成功后页面自动刷新，新版基础数据生效，网页字段和图片覆盖继续保留。
+
+同步任务状态保存在独立的 `data/sync-jobs.sqlite`，不会随题库数据库原子替换而丢失。任务由独立子进程执行，多 Gunicorn worker 下也只允许一个自动同步任务运行。表格新增、修改、删除以及图片内容单独变化都会进入现有行哈希检测；网页覆盖目前按工作表和行号关联，源表插行、删行或排序时建议提供不可变题目 ID，避免旧覆盖关联到其他题目。
 
 ## 验证
 

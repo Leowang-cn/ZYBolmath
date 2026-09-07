@@ -2,8 +2,8 @@ import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronLeft, ChevronRight,
-  Clipboard, Edit3, Expand, ImagePlus, LockKeyhole, LogOut, RotateCcw, Save,
-  Search, Trash2, Upload, X,
+  Clipboard, CloudDownload, Edit3, Expand, ImagePlus, LoaderCircle, LockKeyhole,
+  LogOut, QrCode, RotateCcw, Save, Search, Trash2, Upload, X,
 } from 'lucide-react'
 
 const FILTER_COLUMNS = ['A', 'B', 'C', 'D', 'G', 'H', 'L', 'M', 'N', 'O', 'P']
@@ -124,6 +124,37 @@ function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, mod
   const [progress, setProgress] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [syncJob, setSyncJob] = useState(null)
+
+  useEffect(() => {
+    if (!modal || !authenticated) return
+    let active = true
+    api('/api/data/sync/current').then(({ job }) => {
+      if (active && job && ['queued', 'running'].includes(job.status)) setSyncJob(job)
+    }).catch(() => {})
+    return () => { active = false }
+  }, [modal, authenticated])
+
+  useEffect(() => {
+    if (!syncJob || !['queued', 'running'].includes(syncJob.status)) return
+    const timer = window.setInterval(async () => {
+      try {
+        const { job } = await api(`/api/data/sync/${syncJob.id}`)
+        setSyncJob(job)
+        if (job.status === 'completed') {
+          window.clearInterval(timer)
+          await onComplete()
+        } else if (job.status === 'failed') {
+          window.clearInterval(timer)
+          setError(job.message)
+        }
+      } catch (reason) {
+        window.clearInterval(timer)
+        setError(reason.message)
+      }
+    }, 1500)
+    return () => window.clearInterval(timer)
+  }, [syncJob, onComplete])
 
   const authenticate = async () => {
     if (authenticated) return true
@@ -168,21 +199,48 @@ function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, mod
     }
   }
 
+  const startSync = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await authenticate()
+      const { job } = await api('/api/data/sync', { method: 'POST' })
+      setSyncJob(job)
+    } catch (reason) {
+      setError(reason.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const syncing = syncJob && ['queued', 'running'].includes(syncJob.status)
+  const awaitingLogin = syncing && syncJob.stage === 'awaiting_login'
+
   const panel = <form className="data-import-panel" onSubmit={submit}>
       {modal && <button className="dialog-close" type="button" onClick={onClose} aria-label="关闭"><X size={19} /></button>}
       <div className="brand-mark">π</div>
       <div><span className="setup-label">{modal ? '管理员操作' : '首次初始化'}</span><h1>{modal ? '更新奥数题库' : '导入奥数题库'}</h1></div>
       <p>{modal ? '导入新版数据包。网页中修改的字段和图片会继续保留。' : '当前服务器尚无题库数据。使用管理员密码验证后，导入完整数据压缩包。'}</p>
       {!authenticated && <label className="setup-field"><span>管理员密码</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>}
+      {modal && <div className="automatic-sync">
+        <div className="sync-summary"><strong>钉钉文档</strong><span>{syncing ? syncJob.message : '使用服务器钉钉账号拉取最新表格和图片'}</span></div>
+        {awaitingLogin ? <div className="dingtalk-login">
+          <div className="login-qr"><img src={`/api/data/sync/${syncJob.id}/login.png?v=${encodeURIComponent(syncJob.updatedAt)}`} alt="钉钉登录二维码" /></div>
+          <div><QrCode size={18} /><strong>使用钉钉扫码</strong><span>登录成功后，更新会自动继续</span></div>
+        </div> : <button className="primary" type="button" onClick={startSync} disabled={busy || syncing}>
+          {syncing ? <LoaderCircle className="spin" size={17} /> : <CloudDownload size={17} />}{syncing ? '正在更新' : '从钉钉更新'}
+        </button>}
+      </div>}
+      {modal && <div className="import-divider"><span>或上传离线数据包</span></div>}
       <label className="archive-picker">
         <Upload size={22} />
         <span>{file ? file.name : '选择数据压缩包'}</span>
         <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : '仅支持 .tar.gz，最大 256 MB'}</small>
-        <input type="file" accept=".gz,.tgz,application/gzip" onChange={(event) => setFile(event.target.files[0] || null)} disabled={busy} />
+        <input type="file" accept=".gz,.tgz,application/gzip" onChange={(event) => setFile(event.target.files[0] || null)} disabled={busy || syncing} />
       </label>
       {busy && <div className="upload-progress"><div style={{ width: `${progress}%` }} /><span>{progress < 100 ? `正在上传 ${progress}%` : '正在校验并安装数据…'}</span></div>}
       {error && <div className="form-error" role="alert">{error}</div>}
-      <button className="primary import-submit" type="submit" disabled={busy || !file}><Upload size={17} />{busy ? '正在导入' : modal ? '验证并更新' : '验证并导入'}</button>
+      <button className={modal ? 'import-submit secondary' : 'primary import-submit'} type="submit" disabled={busy || syncing || !file}><Upload size={17} />{busy ? '正在导入' : modal ? '上传并更新' : '验证并导入'}</button>
     </form>
   return modal ? panel : <main className="data-import-page">{panel}</main>
 }

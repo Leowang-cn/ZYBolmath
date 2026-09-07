@@ -19,6 +19,8 @@ from typing import Any, Iterator
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory, session
 
+from sync_jobs import create_job, get_current_job, get_job, launch_job
+
 
 ROOT = Path(__file__).resolve().parent
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", ROOT / "data/app.sqlite"))
@@ -131,6 +133,59 @@ def create_app() -> Flask:
         except (DataImportError, tarfile.TarError, sqlite3.Error, OSError) as error:
             return jsonify(error=f"导入失败：{error}"), 400
         return jsonify(ok=True, **result)
+
+    @app.post("/api/data/sync")
+    def start_data_sync() -> Response:
+        auth_error = require_editor()
+        if auth_error:
+            return auth_error
+        if not os.getenv("DINGTALK_DOCUMENT_URL"):
+            return jsonify(error="服务器尚未配置钉钉文档地址"), 503
+        if os.getenv("ASSET_BACKEND", "local") != "local":
+            return jsonify(error="钉钉自动更新当前仅支持本地图片存储，请使用离线数据包更新"), 503
+        jobs_path = sync_jobs_path()
+        job, created = create_job(jobs_path)
+        if not created:
+            return jsonify(error="已有题库同步任务正在执行", job=job), 409
+        try:
+            launch_job(jobs_path, job["id"])
+        except OSError as error:
+            from sync_jobs import update_job
+            update_job(jobs_path, job["id"], status="failed", stage="failed", message="同步进程启动失败", error_code="worker_start_failed")
+            return jsonify(error=f"同步进程启动失败：{error}"), 503
+        return jsonify(job=get_job(jobs_path, job["id"])), 202
+
+    @app.get("/api/data/sync/current")
+    def current_data_sync() -> Response:
+        auth_error = require_editor()
+        if auth_error:
+            return auth_error
+        return jsonify(job=get_current_job(sync_jobs_path()))
+
+    @app.get("/api/data/sync/<job_id>")
+    def data_sync_status(job_id: str) -> Response:
+        auth_error = require_editor()
+        if auth_error:
+            return auth_error
+        job = get_job(sync_jobs_path(), job_id)
+        if job is None:
+            return jsonify(error="同步任务不存在"), 404
+        return jsonify(job=job)
+
+    @app.get("/api/data/sync/<job_id>/login.png")
+    def data_sync_login_screenshot(job_id: str) -> Response:
+        auth_error = require_editor()
+        if auth_error:
+            return auth_error
+        job = get_job(sync_jobs_path(), job_id)
+        if job is None:
+            return jsonify(error="同步任务不存在"), 404
+        screenshot_path = DATABASE_PATH.parent / "sync-artifacts" / job_id / "login.png"
+        if job["stage"] != "awaiting_login" or not screenshot_path.is_file():
+            return jsonify(error="登录二维码尚未生成或已经失效"), 404
+        response = send_file(screenshot_path, mimetype="image/png", conditional=False)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/api/records")
     def records() -> Response:
@@ -265,6 +320,10 @@ def require_editor() -> tuple[Response, int] | None:
     if not session.get("editor"):
         return jsonify(error="需要编辑权限"), 401
     return None
+
+
+def sync_jobs_path() -> Path:
+    return Path(os.getenv("SYNC_JOBS_PATH", DATABASE_PATH.parent / "sync-jobs.sqlite"))
 
 
 def table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
