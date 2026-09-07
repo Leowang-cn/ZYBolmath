@@ -1,12 +1,13 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
+import { LEVEL_OPTIONS, matchesLevels, toggleLevel } from './levelFilter'
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronLeft, ChevronRight,
   Clipboard, Edit3, Expand, ImagePlus, LockKeyhole, LogOut, RotateCcw, Save,
   Search, Trash2, Upload, X,
 } from 'lucide-react'
 
-const FILTER_COLUMNS = ['A', 'B', 'C', 'D', 'G', 'H', 'L', 'M', 'N', 'O', 'P']
+const FILTER_COLUMNS = ['A', 'B', 'C', 'D', 'G', 'H', 'L', 'M']
 const optionCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
 
 async function api(url, options = {}) {
@@ -56,7 +57,7 @@ function App() {
 
   const records = (data?.records || []).filter((record) => {
     if (deferredQuery && !`${record.searchText} ${record.values.I} ${record.values.J} ${record.values.K}`.toLowerCase().includes(deferredQuery)) return false
-    return FILTER_COLUMNS.every((column) => !filters[column] || record.values[column] === filters[column])
+    return matchesLevels(record.values, filters.levels) && FILTER_COLUMNS.every((column) => !filters[column] || record.values[column] === filters[column])
   })
 
   const options = Object.fromEntries(FILTER_COLUMNS.map((column) => [
@@ -188,7 +189,7 @@ function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, mod
 }
 
 function FilterBar({ headers, filters, setFilters, options, query, setQuery, total, shown, authenticated, onLogin, onDataImport, onLogout }) {
-  const active = Object.values(filters).filter(Boolean).length + (query ? 1 : 0)
+  const active = Object.values(filters).filter((value) => Array.isArray(value) ? value.length > 0 : Boolean(value)).length + (query ? 1 : 0)
   return (
     <header className="filter-bar">
       <div className="brand"><div className="brand-mark">π</div><div><strong>奥数大纲题库</strong><span>{shown} / {total} 条</span></div></div>
@@ -203,6 +204,13 @@ function FilterBar({ headers, filters, setFilters, options, query, setQuery, tot
             </select>
           </label>
         ))}
+        <div className="level-filter" role="group" aria-label="层级">
+          <span className="level-filter-title">层级</span>
+          {LEVEL_OPTIONS.map((option) => <label key={option}>
+            <input type="checkbox" checked={option === '不限' ? !filters.levels?.length : (filters.levels || []).includes(option)} onChange={() => setFilters((value) => ({ ...value, levels: toggleLevel(value.levels, option) }))} />
+            <span>{option}</span>
+          </label>)}
+        </div>
       </div>
       <div className="header-actions">
         {active > 0 && <button className="icon-command" onClick={() => { setFilters({}); setQuery('') }} title="清除筛选"><RotateCcw size={17} /><span>{active}</span></button>}
@@ -291,6 +299,7 @@ function RecordCard({ record, headers, columns, authenticated, onUpdate, onOpenV
             <span title="聚焦本区域后，可直接粘贴剪贴板图片"><Clipboard size={15} />可粘贴</span>
             <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={(event) => { upload(event.target.files[0], uploadTarget === null ? 'append' : 'replace', uploadTarget ?? -1); event.target.value = '' }} />
           </div>}
+          <div className="knowledge-details"><InfoField label={headers.I} value={record.values.I} /><InfoField label={headers.J} value={record.values.J} /></div>
         </div>
         {record.values.K && <button className="example-text" onClick={() => onOpenViewer(record.rowNumber)} title="全屏查看文本示例">{record.values.K}<Expand size={17} /></button>}
         <div className="image-stack">
@@ -305,7 +314,6 @@ function RecordCard({ record, headers, columns, authenticated, onUpdate, onOpenV
           </div>)}
           {!record.images.length && !record.values.K && <div className="no-example">当前没有示例题目</div>}
         </div>
-        <footer className="attachments"><InfoField label={headers.I} value={record.values.I} /><InfoField label={headers.J} value={record.values.J} /></footer>
       </section>
     </article>
   )
