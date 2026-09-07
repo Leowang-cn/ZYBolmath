@@ -23,7 +23,7 @@ button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .35; }
 
 .app-shell { height: 100%; min-width: 1024px; background-color: #f4f3ee; background-image: linear-gradient(rgba(40, 92, 73, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(40, 92, 73, .035) 1px, transparent 1px); background-size: 28px 28px; }
-.filter-bar { height: 156px; display: grid; grid-template-columns: 210px minmax(0, 1fr) 150px; gap: 18px; padding: 16px 22px 14px; background: rgba(255, 254, 250, .97); border-bottom: 1px solid var(--line); box-shadow: 0 3px 16px rgba(32, 37, 33, .08); position: relative; z-index: 5; }
+.filter-bar { height: 156px; display: grid; grid-template-columns: 210px minmax(0, 1fr) 250px; gap: 18px; padding: 16px 22px 14px; background: rgba(255, 254, 250, .97); border-bottom: 1px solid var(--line); box-shadow: 0 3px 16px rgba(32, 37, 33, .08); position: relative; z-index: 5; }
 .brand { display: flex; align-items: flex-start; gap: 11px; padding-top: 2px; }
 .brand-mark { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 38px; background: var(--green); color: white; font: 24px/1 'ZCOOL XiaoWei', serif; border-radius: 4px; }
 .brand strong { display: block; font-family: 'ZCOOL XiaoWei', serif; font-size: 20px; font-weight: 400; margin-top: 1px; white-space: nowrap; }
@@ -95,7 +95,7 @@ button.primary { background: var(--green); border-color: var(--green); color: wh
 @keyframes pulse { to { opacity: .65; transform: scale(.96); } }
 
 .data-import-page { width: 100%; min-height: 100%; display: grid; place-items: center; padding: 32px 18px; overflow: auto; background-color: #e9ebe5; background-image: linear-gradient(rgba(40, 92, 73, .06) 1px, transparent 1px), linear-gradient(90deg, rgba(40, 92, 73, .06) 1px, transparent 1px); background-size: 28px 28px; }
-.data-import-panel { width: min(460px, 100%); padding: 34px; display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 0 14px; background: var(--paper); border: 1px solid #c9ccc3; border-top: 4px solid var(--green); box-shadow: 0 18px 54px rgba(32, 37, 33, .16); }
+.data-import-panel { width: min(460px, 100%); padding: 34px; position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 0 14px; background: var(--paper); border: 1px solid #c9ccc3; border-top: 4px solid var(--green); box-shadow: 0 18px 54px rgba(32, 37, 33, .16); }
 .data-import-panel .brand-mark { width: 48px; height: 48px; font-size: 29px; }
 .setup-label { color: var(--green); font-size: 11px; font-weight: 700; }
 .data-import-panel h1 { margin: 2px 0 0; font: 28px 'ZCOOL XiaoWei', serif; }
@@ -146,7 +146,7 @@ button.primary { background: var(--green); border-color: var(--green); color: wh
 .viewer-nav button { min-width: 132px; color: white; background: #292f2b; border-color: #465048; }
 
 @media (max-width: 1240px) {
-  .filter-bar { grid-template-columns: 185px minmax(0, 1fr) 125px; padding-left: 14px; padding-right: 14px; gap: 12px; }
+  .filter-bar { grid-template-columns: 185px minmax(0, 1fr) 225px; padding-left: 14px; padding-right: 14px; gap: 12px; }
   .brand strong { font-size: 18px; }
   .search-field { width: 175px; }
   .select-field { min-width: 115px; max-width: 155px; }

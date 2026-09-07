@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import tarfile
 import tempfile
+import fcntl
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -118,14 +119,15 @@ def create_app() -> Flask:
         auth_error = require_editor()
         if auth_error:
             return auth_error
-        with get_connection() as connection:
-            if data_is_ready(connection):
-                return jsonify(error="题库数据已经导入，不能通过初始化入口覆盖"), 409
         uploaded = request.files.get("archive")
         if uploaded is None or not uploaded.filename:
             return jsonify(error="请选择题库数据压缩包"), 400
         try:
-            result = install_data_archive(uploaded.stream)
+            lock_path = DATABASE_PATH.parent / ".data-import.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with lock_path.open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                result = install_data_archive(uploaded.stream)
         except (DataImportError, tarfile.TarError, sqlite3.Error, OSError) as error:
             return jsonify(error=f"导入失败：{error}"), 400
         return jsonify(ok=True, **result)
@@ -302,6 +304,8 @@ def install_data_archive(source: Any) -> dict[str, int]:
         if not imported_database.is_file() or not imported_assets.is_dir():
             raise DataImportError("压缩包必须包含 data/app.sqlite 和 data/assets")
         result = validate_imported_data(imported_database, imported_assets)
+        if DATABASE_PATH.is_file():
+            result.update(merge_existing_overrides(imported_database, imported_assets))
         replace_imported_data(imported_database, imported_assets)
         return result
 
@@ -349,6 +353,75 @@ def validate_imported_data(database_path: Path, asset_dir: Path) -> dict[str, in
         return {"records": row_count, "assets": len(assets)}
     finally:
         connection.close()
+
+
+def merge_existing_overrides(imported_database: Path, imported_assets: Path) -> dict[str, int]:
+    source = sqlite3.connect(DATABASE_PATH)
+    source.row_factory = sqlite3.Row
+    destination = sqlite3.connect(imported_database)
+    destination.row_factory = sqlite3.Row
+    preserved_assets: set[str] = set()
+    try:
+        if not all(table_exists(source, table) for table in ("cell_overrides", "row_image_overrides")):
+            return {"fieldOverrides": 0, "imageOverrides": 0, "preservedAssets": 0}
+        initialize_override_tables(destination)
+        field_overrides = list(source.execute("SELECT * FROM cell_overrides"))
+        image_overrides = list(source.execute("SELECT * FROM row_image_overrides"))
+        destination.executemany(
+            "INSERT OR REPLACE INTO cell_overrides(sheet_id, row_number, column_name, value, updated_at) VALUES (?, ?, ?, ?, ?)",
+            [tuple(row) for row in field_overrides],
+        )
+        destination.executemany(
+            "INSERT OR REPLACE INTO row_image_overrides(sheet_id, row_number, asset_hashes_json, updated_at) VALUES (?, ?, ?, ?)",
+            [tuple(row) for row in image_overrides],
+        )
+        referenced_hashes = {
+            asset_hash
+            for row in image_overrides
+            for asset_hash in json.loads(row["asset_hashes_json"])
+        }
+        for asset_hash in referenced_hashes:
+            if destination.execute("SELECT 1 FROM assets WHERE sha256 = ?", (asset_hash,)).fetchone():
+                continue
+            asset = source.execute("SELECT * FROM assets WHERE sha256 = ?", (asset_hash,)).fetchone()
+            if asset is None:
+                raise DataImportError(f"现有图片覆盖引用了无效资源：{asset_hash}")
+            source_path = ASSET_DIR / asset["object_key"]
+            if not source_path.is_file():
+                raise DataImportError(f"现有图片覆盖缺少文件：{asset['object_key']}")
+            destination_path = imported_assets / asset["object_key"]
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, destination_path)
+            destination.execute(
+                "INSERT INTO assets(sha256, object_key, content_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?)",
+                tuple(asset),
+            )
+            preserved_assets.add(asset_hash)
+        destination.commit()
+        return {
+            "fieldOverrides": len(field_overrides),
+            "imageOverrides": len(image_overrides),
+            "preservedAssets": len(preserved_assets),
+        }
+    finally:
+        source.close()
+        destination.close()
+
+
+def initialize_override_tables(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS cell_overrides (
+            sheet_id TEXT NOT NULL, row_number INTEGER NOT NULL, column_name TEXT NOT NULL,
+            value TEXT NOT NULL, updated_at TEXT NOT NULL,
+            PRIMARY KEY (sheet_id, row_number, column_name)
+        );
+        CREATE TABLE IF NOT EXISTS row_image_overrides (
+            sheet_id TEXT NOT NULL, row_number INTEGER NOT NULL, asset_hashes_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL, PRIMARY KEY (sheet_id, row_number)
+        );
+        """
+    )
 
 
 def replace_imported_data(imported_database: Path, imported_assets: Path) -> None:

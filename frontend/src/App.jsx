@@ -28,6 +28,7 @@ function App() {
   const [filters, setFilters] = useState({})
   const [query, setQuery] = useState('')
   const [loginOpen, setLoginOpen] = useState(false)
+  const [dataImportOpen, setDataImportOpen] = useState(false)
   const [viewer, setViewer] = useState(null)
   const [notice, setNotice] = useState('')
   const deferredQuery = useDeferredValue(query.trim().toLowerCase())
@@ -83,6 +84,7 @@ function App() {
         headers={data.headers} filters={filters} setFilters={setFilters} options={options}
         query={query} setQuery={setQuery} total={data.records.length} shown={records.length}
         authenticated={authenticated} onLogin={() => setLoginOpen(true)}
+        onDataImport={() => setDataImportOpen(true)}
         onLogout={async () => { await api('/api/auth/logout', { method: 'POST' }); setAuthenticated(false) }}
       />
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="关闭"><X size={16} /></button></div>}
@@ -103,12 +105,20 @@ function App() {
         ) : <div className="empty"><Search size={28} /><p>没有符合当前条件的数据</p><button onClick={() => { setFilters({}); setQuery('') }}>清除筛选</button></div>}
       </section>
       {loginOpen && <LoginDialog onClose={() => setLoginOpen(false)} onSuccess={() => { setAuthenticated(true); setLoginOpen(false) }} />}
+      {dataImportOpen && <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDataImportOpen(false)}>
+        <DataImport
+          authenticated
+          modal
+          onClose={() => setDataImportOpen(false)}
+          onComplete={async () => { setDataImportOpen(false); await load(); setNotice('题库更新完成') }}
+        />
+      </div>}
       {viewer && <Viewer records={records} viewer={viewer} setViewer={setViewer} headers={data.headers} />}
     </main>
   )
 }
 
-function DataImport({ authenticated, onAuthenticated, onComplete }) {
+function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, modal = false, onClose }) {
   const [password, setPassword] = useState('')
   const [file, setFile] = useState(null)
   const [progress, setProgress] = useState(0)
@@ -158,11 +168,11 @@ function DataImport({ authenticated, onAuthenticated, onComplete }) {
     }
   }
 
-  return <main className="data-import-page">
-    <form className="data-import-panel" onSubmit={submit}>
+  const panel = <form className="data-import-panel" onSubmit={submit}>
+      {modal && <button className="dialog-close" type="button" onClick={onClose} aria-label="关闭"><X size={19} /></button>}
       <div className="brand-mark">π</div>
-      <div><span className="setup-label">首次初始化</span><h1>导入奥数题库</h1></div>
-      <p>当前服务器尚无题库数据。使用管理员密码验证后，导入完整数据压缩包。</p>
+      <div><span className="setup-label">{modal ? '管理员操作' : '首次初始化'}</span><h1>{modal ? '更新奥数题库' : '导入奥数题库'}</h1></div>
+      <p>{modal ? '导入新版数据包。网页中修改的字段和图片会继续保留。' : '当前服务器尚无题库数据。使用管理员密码验证后，导入完整数据压缩包。'}</p>
       {!authenticated && <label className="setup-field"><span>管理员密码</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>}
       <label className="archive-picker">
         <Upload size={22} />
@@ -172,12 +182,12 @@ function DataImport({ authenticated, onAuthenticated, onComplete }) {
       </label>
       {busy && <div className="upload-progress"><div style={{ width: `${progress}%` }} /><span>{progress < 100 ? `正在上传 ${progress}%` : '正在校验并安装数据…'}</span></div>}
       {error && <div className="form-error" role="alert">{error}</div>}
-      <button className="primary import-submit" type="submit" disabled={busy || !file}><Upload size={17} />{busy ? '正在导入' : '验证并导入'}</button>
+      <button className="primary import-submit" type="submit" disabled={busy || !file}><Upload size={17} />{busy ? '正在导入' : modal ? '验证并更新' : '验证并导入'}</button>
     </form>
-  </main>
+  return modal ? panel : <main className="data-import-page">{panel}</main>
 }
 
-function FilterBar({ headers, filters, setFilters, options, query, setQuery, total, shown, authenticated, onLogin, onLogout }) {
+function FilterBar({ headers, filters, setFilters, options, query, setQuery, total, shown, authenticated, onLogin, onDataImport, onLogout }) {
   const active = Object.values(filters).filter(Boolean).length + (query ? 1 : 0)
   return (
     <header className="filter-bar">
@@ -196,6 +206,7 @@ function FilterBar({ headers, filters, setFilters, options, query, setQuery, tot
       </div>
       <div className="header-actions">
         {active > 0 && <button className="icon-command" onClick={() => { setFilters({}); setQuery('') }} title="清除筛选"><RotateCcw size={17} /><span>{active}</span></button>}
+        {authenticated && <button className="auth-button" onClick={onDataImport}><Upload size={16} />更新题库</button>}
         <button className={authenticated ? 'auth-button active' : 'auth-button'} onClick={authenticated ? onLogout : onLogin}>
           {authenticated ? <LogOut size={16} /> : <LockKeyhole size={16} />}{authenticated ? '退出编辑' : '编辑登录'}
         </button>

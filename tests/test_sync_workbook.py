@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sqlite3
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -126,6 +127,26 @@ class SyncWorkbookTest(unittest.TestCase):
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM assets").fetchone()[0], 1)
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM cell_images").fetchone()[0], 1)
         self.assertEqual(connection.execute("SELECT value FROM cells WHERE cell_ref = 'A1'").fetchone()[0], "修改值")
+
+  def test_creates_browser_import_archive(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      root = Path(temporary_directory)
+      database = root / "app.sqlite"
+      database.write_bytes(b"database")
+      assets = root / "assets"
+      image = assets / "nested/example.png"
+      image.parent.mkdir(parents=True)
+      image.write_bytes(b"image")
+      output = root / "release/data.tar.gz"
+
+      result = sync_workbook.create_data_archive(database, assets, output)
+
+      self.assertEqual(result["package"], str(output))
+      self.assertEqual(len(result["package_sha256"]), 64)
+      with tarfile.open(output, "r:gz") as archive:
+        names = set(archive.getnames())
+        self.assertIn("data/app.sqlite", names)
+        self.assertIn("data/assets/nested/example.png", names)
 
 
 if __name__ == "__main__":

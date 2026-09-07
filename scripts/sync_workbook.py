@@ -11,6 +11,7 @@ import os
 import posixpath
 import sqlite3
 import sys
+import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -424,6 +425,31 @@ def sync_workbook(source_path: Path, database_path: Path, asset_store: AssetStor
         connection.close()
 
 
+def create_data_archive(database_path: Path, asset_dir: Path, output_path: Path) -> dict[str, int | str]:
+    if not database_path.is_file():
+        raise FileNotFoundError(f"Database not found: {database_path}")
+    if not asset_dir.is_dir():
+        raise FileNotFoundError(f"Asset directory not found: {asset_dir}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=output_path.parent, suffix=".tar.gz", delete=False) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        with tarfile.open(temporary_path, "w:gz") as archive:
+            archive.add(database_path, arcname="data/app.sqlite")
+            archive.add(asset_dir, arcname="data/assets")
+        temporary_path.replace(output_path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+    with output_path.open("rb") as source:
+        archive_hash = sha256_stream(source)
+    return {
+        "package": str(output_path),
+        "package_bytes": output_path.stat().st_size,
+        "package_sha256": archive_hash,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("xlsx", type=Path, help="DingTalk .xlsx export to import")
@@ -445,6 +471,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(os.getenv("ASSET_DIR", "data/assets")),
         help="Local asset root when --asset-backend=local",
     )
+    parser.add_argument(
+        "--package",
+        type=Path,
+        help="Create a browser-importable .tar.gz after syncing",
+    )
     return parser
 
 
@@ -455,6 +486,11 @@ def main() -> int:
         return 2
     store: AssetStore = LocalAssetStore(args.asset_dir) if args.asset_backend == "local" else MinioAssetStore()
     stats = sync_workbook(args.xlsx, args.database, store)
+    if args.package:
+        if args.asset_backend != "local":
+            print(json.dumps({"error": "--package requires --asset-backend local"}), file=sys.stderr)
+            return 2
+        stats.update(create_data_archive(args.database, args.asset_dir, args.package))
     print(json.dumps(stats, ensure_ascii=False, sort_keys=True))
     return 0
 

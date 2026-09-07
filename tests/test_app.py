@@ -121,6 +121,51 @@ class AppApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("不安全路径", response.get_json()["error"])
 
+    def test_updates_seed_data_and_preserves_overrides(self) -> None:
+        self.login()
+        self.assertEqual(self.client.patch("/api/records/2", json={"values": {"A": "网页覆盖"}}).status_code, 200)
+        image_upload = self.client.post(
+            "/api/records/2/images",
+            data={"image": (io.BytesIO(b"server-image"), "server.png"), "action": "append"},
+            content_type="multipart/form-data",
+        )
+        image_hash = image_upload.get_json()["images"][0]["hash"]
+
+        updated_database = Path(self.temporary_directory.name) / "updated.sqlite"
+        original_database = app_module.DATABASE_PATH
+        app_module.DATABASE_PATH = updated_database
+        try:
+            self.seed_database()
+            with closing(sqlite3.connect(updated_database)) as connection, connection:
+                connection.execute("UPDATE cells SET value = '新版标题' WHERE cell_ref = 'D2'")
+        finally:
+            app_module.DATABASE_PATH = original_database
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+            bundle.add(updated_database, arcname="data/app.sqlite")
+            empty_assets = tarfile.TarInfo("data/assets/")
+            empty_assets.type = tarfile.DIRTYPE
+            bundle.addfile(empty_assets)
+        archive.seek(0)
+
+        response = self.client.post(
+            "/api/data/import",
+            data={"archive": (archive, "update.tar.gz")},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["fieldOverrides"], 1)
+        self.assertEqual(response.get_json()["imageOverrides"], 1)
+        self.assertEqual(response.get_json()["preservedAssets"], 1)
+        record = self.client.get("/api/records").get_json()["records"][0]
+        self.assertEqual(record["title"], "新版标题")
+        self.assertEqual(record["values"]["A"], "网页覆盖")
+        self.assertEqual(record["images"][0]["hash"], image_hash)
+        image_response = self.client.get(f"/api/assets/{image_hash}")
+        self.assertEqual(image_response.data, b"server-image")
+        image_response.close()
+
     def test_field_and_image_overrides(self) -> None:
         self.login()
         self.assertEqual(self.client.patch("/api/records/2", json={"values": {"A": "四年级"}}).status_code, 200)
