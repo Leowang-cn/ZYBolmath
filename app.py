@@ -82,8 +82,8 @@ def create_app() -> Flask:
     def health() -> Response:
         try:
             with get_connection() as connection:
-                connection.execute("SELECT 1").fetchone()
-            return jsonify(status="ok")
+                data_ready = table_exists(connection, "sheets") and table_exists(connection, "rows")
+            return jsonify(status="ok", dataReady=data_ready)
         except sqlite3.Error:
             return jsonify(status="error"), 503
 
@@ -109,6 +109,8 @@ def create_app() -> Flask:
     @app.get("/api/records")
     def records() -> Response:
         with get_connection() as connection:
+            if not table_exists(connection, "sheets"):
+                return jsonify(error="题库数据尚未导入，请上传 data/app.sqlite 和 data/assets"), 503
             sheet = connection.execute("SELECT sheet_id, name FROM sheets WHERE name = ?", (TARGET_SHEET,)).fetchone()
             if sheet is None:
                 return jsonify(error=f"未找到工作表：{TARGET_SHEET}"), 404
@@ -237,6 +239,12 @@ def require_editor() -> tuple[Response, int] | None:
     if not session.get("editor"):
         return jsonify(error="需要编辑权限"), 401
     return None
+
+
+def table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table_name,)
+    ).fetchone() is not None
 
 
 def get_target_sheet_id(connection: sqlite3.Connection) -> str | None:

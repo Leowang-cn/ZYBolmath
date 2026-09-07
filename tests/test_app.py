@@ -54,12 +54,23 @@ class AppApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_health_records_and_authentication(self) -> None:
-        self.assertEqual(self.client.get("/api/health").get_json(), {"status": "ok"})
+        self.assertEqual(self.client.get("/api/health").get_json(), {"dataReady": True, "status": "ok"})
         records = self.client.get("/api/records").get_json()["records"]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["title"], "巧求周长")
         self.assertEqual(self.client.patch("/api/records/2", json={"values": {"A": "四年级"}}).status_code, 401)
         self.assertEqual(self.client.post("/api/auth/login", json={"password": "wrong"}).status_code, 401)
+
+    def test_reports_missing_seed_data(self) -> None:
+        app_module.DATABASE_PATH.unlink()
+        application = app_module.create_app()
+        application.config.update(TESTING=True, SECRET_KEY="test-secret")
+        client = application.test_client()
+
+        self.assertEqual(client.get("/api/health").get_json(), {"dataReady": False, "status": "ok"})
+        response = client.get("/api/records")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("题库数据尚未导入", response.get_json()["error"])
 
     def test_field_and_image_overrides(self) -> None:
         self.login()

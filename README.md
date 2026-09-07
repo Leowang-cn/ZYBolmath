@@ -30,6 +30,20 @@ PORT=8910 SECRET_KEY='生产随机密钥' EDITOR_PASSWORD='编辑密码' \
 
 完整环境变量见 [.env.example](.env.example)。生产环境必须设置固定的 `SECRET_KEY` 和强 `EDITOR_PASSWORD`；HTTPS 部署时设置 `COOKIE_SECURE=1`。健康检查为 `GET /api/health`。
 
+### 首次部署数据
+
+`data/` 不进入 Git。首次部署必须将已有的 `data/app.sqlite` 与 `data/assets/` 上传到项目根目录，否则健康检查会返回 `dataReady: false`，页面也会提示题库数据尚未导入。
+
+将数据包上传到服务器的 `/tmp/ZYBolmath-data.tar.gz` 后执行：
+
+```bash
+cd /data/deploys/ZYBolmath
+tar -xzf /tmp/ZYBolmath-data.tar.gz
+curl -fsS http://127.0.0.1:$PORT/api/health
+```
+
+健康检查应返回 `{"dataReady":true,"status":"ok"}`，随后重启应用。
+
 ## 验证
 
 ```bash
