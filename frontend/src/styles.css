@@ -91,8 +91,28 @@ button.primary { background: var(--green); border-color: var(--green); color: wh
 .loading, .empty { width: 100%; height: 100%; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 .loading-mark { width: 58px; height: 58px; display: grid; place-items: center; background: var(--green); color: white; font: 32px 'ZCOOL XiaoWei', serif; border-radius: 4px; animation: pulse 1.2s ease-in-out infinite alternate; }
 .loading p, .empty p { margin: 13px 0; font-size: 13px; }
-.empty button { border: 0; background: none; color: var(--green); text-decoration: underline; }
+.loading button, .empty button { border: 0; background: none; color: var(--green); text-decoration: underline; }
 @keyframes pulse { to { opacity: .65; transform: scale(.96); } }
+
+.data-import-page { width: 100%; min-height: 100%; display: grid; place-items: center; padding: 32px 18px; overflow: auto; background-color: #e9ebe5; background-image: linear-gradient(rgba(40, 92, 73, .06) 1px, transparent 1px), linear-gradient(90deg, rgba(40, 92, 73, .06) 1px, transparent 1px); background-size: 28px 28px; }
+.data-import-panel { width: min(460px, 100%); padding: 34px; display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 0 14px; background: var(--paper); border: 1px solid #c9ccc3; border-top: 4px solid var(--green); box-shadow: 0 18px 54px rgba(32, 37, 33, .16); }
+.data-import-panel .brand-mark { width: 48px; height: 48px; font-size: 29px; }
+.setup-label { color: var(--green); font-size: 11px; font-weight: 700; }
+.data-import-panel h1 { margin: 2px 0 0; font: 28px 'ZCOOL XiaoWei', serif; }
+.data-import-panel > p, .data-import-panel > label, .data-import-panel > div:not(:first-child), .data-import-panel > button { grid-column: 1 / -1; }
+.data-import-panel > p { margin: 22px 0 18px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.setup-field { display: grid; gap: 6px; margin-bottom: 14px; }
+.setup-field span { color: var(--muted); font-size: 11px; }
+.setup-field input { width: 100%; height: 42px; padding: 0 11px; border: 1px solid #aeb3aa; outline: 0; }
+.setup-field input:focus { border-color: var(--green); box-shadow: 0 0 0 2px rgba(40,92,73,.12); }
+.archive-picker { min-height: 112px; display: grid; place-items: center; align-content: center; gap: 5px; color: var(--green); border: 1px dashed #8da596; background: #f3f7f3; cursor: pointer; }
+.archive-picker span { max-width: 100%; padding: 0 18px; color: var(--ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.archive-picker small { color: var(--muted); font-size: 11px; }
+.archive-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.upload-progress { height: 36px; margin-top: 14px; position: relative; overflow: hidden; border: 1px solid #c8cec6; background: #eef0eb; }
+.upload-progress > div { height: 100%; background: var(--green-light); transition: width .2s ease; }
+.upload-progress span { position: absolute; inset: 0; display: grid; place-items: center; color: var(--green); font-size: 11px; font-weight: 600; }
+.import-submit { height: 42px; margin-top: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 3px; }
 
 .dialog-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(21, 26, 23, .58); backdrop-filter: blur(3px); }
 .login-dialog { width: 360px; position: relative; padding: 28px; background: var(--paper); border: 1px solid #c4c6be; box-shadow: 0 18px 60px rgba(15, 20, 17, .3); }

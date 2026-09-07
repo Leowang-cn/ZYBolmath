@@ -7,7 +7,10 @@ import json
 import mimetypes
 import os
 import secrets
+import shutil
 import sqlite3
+import tarfile
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +28,10 @@ VISIBLE_COLUMNS = tuple("ABCDEFGH") + tuple("LMNOPQRSTU")
 ALL_COLUMNS = tuple("ABCDEFGHIJKLMNOPQRSTU")
 ALLOWED_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_DATA_IMPORT_BYTES = 256 * 1024 * 1024
+MAX_DATA_EXTRACTED_BYTES = 512 * 1024 * 1024
+MAX_DATA_ARCHIVE_MEMBERS = 10_000
+REQUIRED_DATA_TABLES = {"sheets", "rows", "cells", "assets", "cell_images"}
 
 
 def utc_now() -> str:
@@ -71,7 +78,7 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder="frontend/dist", static_url_path="")
     app.config.update(
         SECRET_KEY=os.getenv("SECRET_KEY", secrets.token_hex(32)),
-        MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
+        MAX_CONTENT_LENGTH=MAX_DATA_IMPORT_BYTES,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Strict",
         SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "0") == "1",
@@ -105,6 +112,23 @@ def create_app() -> Flask:
     def logout() -> Response:
         session.clear()
         return jsonify(authenticated=False)
+
+    @app.post("/api/data/import")
+    def import_data() -> Response:
+        auth_error = require_editor()
+        if auth_error:
+            return auth_error
+        with get_connection() as connection:
+            if data_is_ready(connection):
+                return jsonify(error="题库数据已经导入，不能通过初始化入口覆盖"), 409
+        uploaded = request.files.get("archive")
+        if uploaded is None or not uploaded.filename:
+            return jsonify(error="请选择题库数据压缩包"), 400
+        try:
+            result = install_data_archive(uploaded.stream)
+        except (DataImportError, tarfile.TarError, sqlite3.Error, OSError) as error:
+            return jsonify(error=f"导入失败：{error}"), 400
+        return jsonify(ok=True, **result)
 
     @app.get("/api/records")
     def records() -> Response:
@@ -245,6 +269,118 @@ def table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     return connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table_name,)
     ).fetchone() is not None
+
+
+def data_is_ready(connection: sqlite3.Connection) -> bool:
+    return table_exists(connection, "sheets") and table_exists(connection, "rows")
+
+
+class DataImportError(ValueError):
+    pass
+
+
+def install_data_archive(source: Any) -> dict[str, int]:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ASSET_DIR.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="olmath-import-", dir=DATABASE_PATH.parent) as temporary_directory:
+        temporary_root = Path(temporary_directory)
+        archive_path = temporary_root / "upload.tar.gz"
+        with archive_path.open("wb") as destination:
+            shutil.copyfileobj(source, destination, length=1024 * 1024)
+        if archive_path.stat().st_size > MAX_DATA_IMPORT_BYTES:
+            raise DataImportError("压缩包超过 256 MB")
+
+        extract_root = temporary_root / "extracted"
+        extract_root.mkdir()
+        with tarfile.open(archive_path, "r:gz") as archive:
+            members = archive.getmembers()
+            validate_archive_members(members)
+            archive.extractall(extract_root, members=members, filter="data")
+
+        imported_database = extract_root / "data/app.sqlite"
+        imported_assets = extract_root / "data/assets"
+        if not imported_database.is_file() or not imported_assets.is_dir():
+            raise DataImportError("压缩包必须包含 data/app.sqlite 和 data/assets")
+        result = validate_imported_data(imported_database, imported_assets)
+        replace_imported_data(imported_database, imported_assets)
+        return result
+
+
+def validate_archive_members(members: list[tarfile.TarInfo]) -> None:
+    if len(members) > MAX_DATA_ARCHIVE_MEMBERS:
+        raise DataImportError("压缩包文件数量过多")
+    extracted_bytes = 0
+    for member in members:
+        member_path = Path(member.name)
+        if member_path.is_absolute() or ".." in member_path.parts:
+            raise DataImportError("压缩包包含不安全路径")
+        if not member.isreg() and not member.isdir():
+            raise DataImportError("压缩包包含不支持的链接或设备文件")
+        if member_path.parts[:1] != ("data",):
+            raise DataImportError("压缩包只能包含 data 目录")
+        extracted_bytes += member.size
+        if extracted_bytes > MAX_DATA_EXTRACTED_BYTES:
+            raise DataImportError("解压后数据超过 512 MB")
+
+
+def validate_imported_data(database_path: Path, asset_dir: Path) -> dict[str, int]:
+    connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise DataImportError("SQLite 数据库完整性校验失败")
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not REQUIRED_DATA_TABLES.issubset(tables):
+            raise DataImportError("SQLite 数据库缺少题库表")
+        sheet = connection.execute("SELECT sheet_id FROM sheets WHERE name = ?", (TARGET_SHEET,)).fetchone()
+        if sheet is None:
+            raise DataImportError(f"SQLite 数据库中没有工作表：{TARGET_SHEET}")
+        row_count = connection.execute(
+            "SELECT COUNT(*) FROM rows WHERE sheet_id = ? AND row_number > 1", (sheet["sheet_id"],)
+        ).fetchone()[0]
+        if row_count == 0:
+            raise DataImportError("目标工作表没有题库记录")
+        assets = list(connection.execute("SELECT object_key FROM assets"))
+        for asset in assets:
+            object_key = Path(asset["object_key"])
+            if object_key.is_absolute() or ".." in object_key.parts or not (asset_dir / object_key).is_file():
+                raise DataImportError(f"缺少图片文件：{asset['object_key']}")
+        return {"records": row_count, "assets": len(assets)}
+    finally:
+        connection.close()
+
+
+def replace_imported_data(imported_database: Path, imported_assets: Path) -> None:
+    backup_database = DATABASE_PATH.with_suffix(".sqlite.import-backup")
+    backup_assets = ASSET_DIR.with_name(f"{ASSET_DIR.name}.import-backup")
+    for backup in (backup_database, backup_assets):
+        if backup.is_dir():
+            shutil.rmtree(backup)
+        elif backup.exists():
+            backup.unlink()
+    try:
+        if ASSET_DIR.exists():
+            ASSET_DIR.replace(backup_assets)
+        imported_assets.replace(ASSET_DIR)
+        if DATABASE_PATH.exists():
+            DATABASE_PATH.replace(backup_database)
+        imported_database.replace(DATABASE_PATH)
+    except OSError:
+        if DATABASE_PATH.exists():
+            DATABASE_PATH.unlink()
+        if backup_database.exists():
+            backup_database.replace(DATABASE_PATH)
+        if ASSET_DIR.exists():
+            shutil.rmtree(ASSET_DIR)
+        if backup_assets.exists():
+            backup_assets.replace(ASSET_DIR)
+        raise
+    finally:
+        if backup_database.exists():
+            backup_database.unlink()
+        if backup_assets.exists():
+            shutil.rmtree(backup_assets)
 
 
 def get_target_sheet_id(connection: sqlite3.Connection) -> str | None:

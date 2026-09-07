@@ -22,6 +22,8 @@ async function api(url, options = {}) {
 
 function App() {
   const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [importNeeded, setImportNeeded] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
   const [filters, setFilters] = useState({})
   const [query, setQuery] = useState('')
@@ -31,12 +33,21 @@ function App() {
   const deferredQuery = useDeferredValue(query.trim().toLowerCase())
 
   const load = async () => {
+    setLoading(true)
     try {
-      const [records, auth] = await Promise.all([api('/api/records'), api('/api/auth/status')])
-      setData(records)
+      const [health, auth] = await Promise.all([api('/api/health'), api('/api/auth/status')])
       setAuthenticated(auth.authenticated)
+      setImportNeeded(!health.dataReady)
+      if (health.dataReady) {
+        setData(await api('/api/records'))
+      } else {
+        setData(null)
+      }
+      setNotice('')
     } catch (error) {
       setNotice(error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -62,7 +73,9 @@ function App() {
     if (recordIndex >= 0) setViewer({ recordIndex, imageIndex })
   }
 
-  if (!data) return <div className="loading"><span className="loading-mark">π</span><p>{notice || '正在载入题库…'}</p></div>
+  if (loading) return <div className="loading"><span className="loading-mark">π</span><p>正在载入题库…</p></div>
+  if (importNeeded) return <DataImport authenticated={authenticated} onAuthenticated={() => setAuthenticated(true)} onComplete={load} />
+  if (!data) return <div className="loading"><span className="loading-mark">π</span><p>{notice || '题库载入失败'}</p><button onClick={load}>重新加载</button></div>
 
   return (
     <main className="app-shell">
@@ -93,6 +106,75 @@ function App() {
       {viewer && <Viewer records={records} viewer={viewer} setViewer={setViewer} headers={data.headers} />}
     </main>
   )
+}
+
+function DataImport({ authenticated, onAuthenticated, onComplete }) {
+  const [password, setPassword] = useState('')
+  const [file, setFile] = useState(null)
+  const [progress, setProgress] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const authenticate = async () => {
+    if (authenticated) return true
+    await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) })
+    onAuthenticated()
+    return true
+  }
+
+  const uploadArchive = (archive) => new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    const form = new FormData()
+    form.append('archive', archive)
+    request.open('POST', '/api/data/import')
+    request.withCredentials = true
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) setProgress(Math.round((event.loaded / event.total) * 100))
+    }
+    request.onload = () => {
+      let payload = {}
+      try { payload = JSON.parse(request.responseText) } catch { /* 后端异常页 */ }
+      if (request.status >= 200 && request.status < 300) resolve(payload)
+      else reject(new Error(payload.error || `上传失败（HTTP ${request.status}）`))
+    }
+    request.onerror = () => reject(new Error('网络中断，数据包上传失败'))
+    request.send(form)
+  })
+
+  const submit = async (event) => {
+    event.preventDefault()
+    if (!file) return setError('请选择 ZYBolmath-data.tar.gz')
+    setBusy(true)
+    setError('')
+    setProgress(0)
+    try {
+      await authenticate()
+      await uploadArchive(file)
+      await onComplete()
+    } catch (reason) {
+      setError(reason.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <main className="data-import-page">
+    <form className="data-import-panel" onSubmit={submit}>
+      <div className="brand-mark">π</div>
+      <div><span className="setup-label">首次初始化</span><h1>导入奥数题库</h1></div>
+      <p>当前服务器尚无题库数据。使用管理员密码验证后，导入完整数据压缩包。</p>
+      {!authenticated && <label className="setup-field"><span>管理员密码</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>}
+      <label className="archive-picker">
+        <Upload size={22} />
+        <span>{file ? file.name : '选择数据压缩包'}</span>
+        <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : '仅支持 .tar.gz，最大 256 MB'}</small>
+        <input type="file" accept=".gz,.tgz,application/gzip" onChange={(event) => setFile(event.target.files[0] || null)} disabled={busy} />
+      </label>
+      {busy && <div className="upload-progress"><div style={{ width: `${progress}%` }} /><span>{progress < 100 ? `正在上传 ${progress}%` : '正在校验并安装数据…'}</span></div>}
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <button className="primary import-submit" type="submit" disabled={busy || !file}><Upload size={17} />{busy ? '正在导入' : '验证并导入'}</button>
+    </form>
+  </main>
 }
 
 function FilterBar({ headers, filters, setFilters, options, query, setQuery, total, shown, authenticated, onLogin, onLogout }) {

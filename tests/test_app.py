@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import sqlite3
+import tarfile
 import tempfile
 import unittest
 from contextlib import closing
@@ -71,6 +72,54 @@ class AppApiTest(unittest.TestCase):
         response = client.get("/api/records")
         self.assertEqual(response.status_code, 503)
         self.assertIn("题库数据尚未导入", response.get_json()["error"])
+
+    def test_imports_seed_data_from_archive(self) -> None:
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+            bundle.add(app_module.DATABASE_PATH, arcname="data/app.sqlite")
+            empty_assets = tarfile.TarInfo("data/assets/")
+            empty_assets.type = tarfile.DIRTYPE
+            bundle.addfile(empty_assets)
+        archive.seek(0)
+
+        app_module.DATABASE_PATH.unlink()
+        application = app_module.create_app()
+        application.config.update(TESTING=True, SECRET_KEY="test-secret")
+        client = application.test_client()
+        self.assertEqual(client.post("/api/auth/login", json={"password": "test-password"}).status_code, 200)
+        response = client.post(
+            "/api/data/import",
+            data={"archive": (archive, "data.tar.gz")},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["records"], 1)
+        self.assertTrue(client.get("/api/health").get_json()["dataReady"])
+        self.assertEqual(len(client.get("/api/records").get_json()["records"]), 1)
+
+    def test_rejects_unsafe_data_archive(self) -> None:
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+            payload = b"unsafe"
+            member = tarfile.TarInfo("../outside.txt")
+            member.size = len(payload)
+            bundle.addfile(member, io.BytesIO(payload))
+        archive.seek(0)
+
+        app_module.DATABASE_PATH.unlink()
+        application = app_module.create_app()
+        application.config.update(TESTING=True, SECRET_KEY="test-secret")
+        client = application.test_client()
+        self.assertEqual(client.post("/api/auth/login", json={"password": "test-password"}).status_code, 200)
+        response = client.post(
+            "/api/data/import",
+            data={"archive": (archive, "unsafe.tar.gz")},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("不安全路径", response.get_json()["error"])
 
     def test_field_and_image_overrides(self) -> None:
         self.login()

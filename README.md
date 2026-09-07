@@ -32,17 +32,15 @@ PORT=8910 SECRET_KEY='生产随机密钥' EDITOR_PASSWORD='编辑密码' \
 
 ### 首次部署数据
 
-`data/` 不进入 Git。首次部署必须将已有的 `data/app.sqlite` 与 `data/assets/` 上传到项目根目录，否则健康检查会返回 `dataReady: false`，页面也会提示题库数据尚未导入。
+`data/` 不进入 Git。首次部署启动后，健康检查会返回 `dataReady: false`，页面自动显示“导入奥数题库”：
 
-将数据包上传到服务器的 `/tmp/ZYBolmath-data.tar.gz` 后执行：
+1. 输入服务器环境变量 `EDITOR_PASSWORD` 配置的管理员密码。
+2. 选择 `ZYBolmath-data.tar.gz` 数据包。
+3. 点击“验证并导入”，等待上传、校验和安装完成。
 
-```bash
-cd /data/deploys/ZYBolmath
-tar -xzf /tmp/ZYBolmath-data.tar.gz
-curl -fsS http://127.0.0.1:$PORT/api/health
-```
+数据包最大 256 MB，必须包含 `data/app.sqlite` 和 `data/assets/`。服务端会拒绝不安全路径、链接、缺少题库表、缺少目标工作表或图片不完整的数据包。导入成功后页面自动进入题库，初始化入口随即关闭，不能用于覆盖现有数据。
 
-健康检查应返回 `{"dataReady":true,"status":"ok"}`，随后重启应用。
+健康检查随后返回 `{"dataReady":true,"status":"ok"}`，无需登录服务器或重启应用。
 
 ## 验证
 
