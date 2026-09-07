@@ -1,0 +1,9 @@
+.downloads/
+.venv*/
+data/
+node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+.DS_Store
+docs/部署要求.md

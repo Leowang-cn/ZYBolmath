@@ -1,0 +1,1 @@
+web: gunicorn --bind 0.0.0.0:${PORT:-8910} --workers 2 --threads 4 app:app
