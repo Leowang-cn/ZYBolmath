@@ -18,6 +18,7 @@ from scripts.dingtalk_export import DingTalkExportError, _positive_int, validate
 PASS_THROUGH = (
     "DINGTALK_DOCUMENT_URL", "DINGTALK_EXPORT_TIMEOUT_MS", "DINGTALK_LOGIN_TIMEOUT_MS",
     "DINGTALK_MENU_TEXT", "DINGTALK_EXPORT_TEXT", "DINGTALK_EXCEL_TEXT",
+    "DINGTALK_FORCE_LOGIN",
 )
 
 

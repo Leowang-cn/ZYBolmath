@@ -199,12 +199,12 @@ function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, mod
     }
   }
 
-  const startSync = async () => {
+  const startSync = async (reauthenticate = false) => {
     setBusy(true)
     setError('')
     try {
       await authenticate()
-      const { job } = await api('/api/data/sync', { method: 'POST' })
+      const { job } = await api('/api/data/sync', { method: 'POST', body: JSON.stringify({ reauthenticate }) })
       setSyncJob(job)
     } catch (reason) {
       setError(reason.message)
@@ -227,9 +227,12 @@ function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, mod
         {awaitingLogin ? <div className="dingtalk-login">
           <div className="login-qr"><img src={`/api/data/sync/${syncJob.id}/login.png?v=${encodeURIComponent(syncJob.updatedAt)}`} alt="钉钉登录二维码" /></div>
           <div><QrCode size={18} /><strong>使用钉钉扫码</strong><span>登录成功后，更新会自动继续</span></div>
-        </div> : <button className="primary" type="button" onClick={startSync} disabled={busy || syncing}>
+        </div> : <button className="primary" type="button" onClick={() => startSync()} disabled={busy || syncing}>
           {syncing ? <LoaderCircle className="spin" size={17} /> : <CloudDownload size={17} />}{syncing ? '正在更新' : '从钉钉更新'}
         </button>}
+        <button className="secondary" type="button" onClick={() => startSync(true)} disabled={busy || syncing}>
+          <QrCode size={17} />重新扫码登录
+        </button>
       </div>}
       {modal && <div className="import-divider"><span>或上传离线数据包</span></div>}
       <label className="archive-picker">

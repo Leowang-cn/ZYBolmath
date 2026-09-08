@@ -144,11 +144,17 @@ def create_app() -> Flask:
         if os.getenv("ASSET_BACKEND", "local") != "local":
             return jsonify(error="钉钉自动更新当前仅支持本地图片存储，请使用离线数据包更新"), 503
         jobs_path = sync_jobs_path()
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict) or type(payload.get("reauthenticate", False)) is not bool:
+            return jsonify(error="reauthenticate 必须为布尔值"), 400
         job, created = create_job(jobs_path)
         if not created:
             return jsonify(error="已有题库同步任务正在执行", job=job), 409
         try:
-            launch_job(jobs_path, job["id"])
+            if payload.get("reauthenticate"):
+                launch_job(jobs_path, job["id"], reauthenticate=True)
+            else:
+                launch_job(jobs_path, job["id"])
         except OSError as error:
             from sync_jobs import update_job
             update_job(jobs_path, job["id"], status="failed", stage="failed", message="同步进程启动失败", error_code="worker_start_failed")

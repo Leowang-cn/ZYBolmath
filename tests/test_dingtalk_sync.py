@@ -6,15 +6,45 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import app
 from scripts import run_dingtalk_sync
+from scripts.dingtalk_export import DingTalkExportError, _check_document_access, _click_first
 from sync_jobs import create_job, get_job
 from tests.test_sync_workbook import write_fixture
 
 
 class DingTalkSyncWorkerTest(unittest.TestCase):
+    def test_new_session_preserves_old_profile_and_is_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ):
+            root = Path(directory)
+            profile = root / "browser-profile"
+            profile.mkdir()
+            (profile / "credential").write_text("existing")
+            os.environ["BROWSER_PROFILE_PATH"] = str(profile)
+            os.environ["DINGTALK_FORCE_LOGIN"] = "1"
+            run_dingtalk_sync._select_browser_profile(root / "jobs.sqlite", "a" * 32)
+            selected = os.environ["BROWSER_PROFILE_PATH"]
+            self.assertNotEqual(selected, str(profile))
+            self.assertEqual((profile / "credential").read_text(), "existing")
+            os.environ["BROWSER_PROFILE_PATH"] = str(profile)
+            os.environ["DINGTALK_FORCE_LOGIN"] = "0"
+            run_dingtalk_sync._select_browser_profile(root / "jobs.sqlite", "b" * 32)
+            self.assertEqual(os.environ["BROWSER_PROFILE_PATH"], selected)
+
+    def test_missing_controls_are_not_permission_denial(self) -> None:
+        page = MagicMock()
+        with patch("scripts.dingtalk_export._first_visible", return_value=None):
+            with self.assertRaises(DingTalkExportError) as caught:
+                _click_first(page, [], "export_controls_not_found")
+            self.assertEqual(caught.exception.code, "export_controls_not_found")
+        page.locator.return_value.inner_text.return_value = "禁止导出"
+        with patch("scripts.dingtalk_export._login_required", return_value=False):
+            with self.assertRaises(DingTalkExportError) as caught:
+                _check_document_access(page)
+            self.assertEqual(caught.exception.code, "export_permission_denied")
+
     def test_saves_login_screenshot_and_updates_job(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

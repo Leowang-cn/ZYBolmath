@@ -90,6 +90,17 @@ class AppApiTest(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/data/sync/{job['id']}").get_json()["job"]["id"], job["id"])
         self.assertEqual(self.client.get("/api/data/sync/current").get_json()["job"]["id"], job["id"])
 
+    def test_sync_reauthentication_is_authorized_and_exclusive(self) -> None:
+        self.assertEqual(self.client.post("/api/data/sync", json={"reauthenticate": True}).status_code, 401)
+        self.login()
+        os.environ["DINGTALK_DOCUMENT_URL"] = "https://alidocs.dingtalk.com/example"
+        self.assertEqual(self.client.post("/api/data/sync", json={"reauthenticate": "true"}).status_code, 400)
+        with patch("app.launch_job", return_value=12345) as launch:
+            response = self.client.post("/api/data/sync", json={"reauthenticate": True})
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(self.client.post("/api/data/sync", json={"reauthenticate": True}).status_code, 409)
+            launch.assert_called_once_with(Path(os.environ["SYNC_JOBS_PATH"]), response.get_json()["job"]["id"], reauthenticate=True)
+
     def test_login_screenshot_requires_authentication_and_disables_cache(self) -> None:
         jobs_path = Path(os.environ["SYNC_JOBS_PATH"])
         job, _ = create_job(jobs_path)

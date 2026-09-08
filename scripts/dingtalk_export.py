@@ -52,18 +52,25 @@ def export_workbook(destination: Path, on_login_screenshot: Callable[[bytes], No
             try:
                 page = context.pages[0] if context.pages else context.new_page()
                 page.set_default_timeout(timeout_ms)
+                if os.getenv("DINGTALK_FORCE_LOGIN") == "1":
+                    page.goto("https://alidocs.dingtalk.com/i/desktop/recent", wait_until="domcontentloaded", timeout=timeout_ms)
+                    page.wait_for_timeout(2_000)
+                    if _login_required(page):
+                        _wait_for_login(page, document_url, on_login_screenshot)
+                    else:
+                        raise DingTalkExportError("login_page_not_found", "未检测到钉钉登录页面，请检查登录入口")
                 page.goto(document_url, wait_until="domcontentloaded", timeout=timeout_ms)
                 page.wait_for_timeout(2_000)
                 if _login_required(page):
                     _wait_for_login(page, document_url, on_login_screenshot)
                 _check_document_access(page)
-                _click_first(page, _patterns("DINGTALK_MENU_TEXT", r"更多|菜单|文件"), "export_permission_denied")
+                _click_first(page, _patterns("DINGTALK_MENU_TEXT", r"更多|菜单|文件"), "export_controls_not_found")
                 page.wait_for_timeout(500)
-                _click_first(page, _patterns("DINGTALK_EXPORT_TEXT", r"下载|导出"), "export_permission_denied")
+                _click_first(page, _patterns("DINGTALK_EXPORT_TEXT", r"下载|导出"), "export_controls_not_found")
                 page.wait_for_timeout(500)
                 export_option = _first_visible(page, _patterns("DINGTALK_EXCEL_TEXT", r"Excel|XLSX|表格"))
                 if export_option is None:
-                    raise DingTalkExportError("export_permission_denied", "当前钉钉账号没有下载或导出 Excel 的权限")
+                    raise DingTalkExportError("export_controls_not_found", "未找到 Excel 导出选项，可能是页面结构变化或账号权限限制，可尝试重新扫码登录")
                 with page.expect_download(timeout=timeout_ms) as download_info:
                     export_option.click()
                 download = download_info.value
@@ -100,6 +107,8 @@ def _check_document_access(page: object) -> None:
         raise DingTalkExportError("login_required", "钉钉登录已失效，请重新完成扫码登录")
     if re.search(r"无权访问|暂无权限|申请权限|access denied|permission denied", body, re.IGNORECASE):
         raise DingTalkExportError("document_access_denied", "当前钉钉账号无权查看目标文档")
+    if re.search(r"禁止下载|禁止导出|不允许下载|不允许导出|无下载权限|无导出权限", body):
+        raise DingTalkExportError("export_permission_denied", "钉钉页面提示禁止下载或导出，请使用有权限的账号或联系文档所有者")
 
 
 def _login_required(page: object) -> bool:
@@ -165,7 +174,7 @@ def _first_visible(page: object, patterns: list[re.Pattern[str]]) -> object | No
 def _click_first(page: object, patterns: list[re.Pattern[str]], error_code: str) -> None:
     locator = _first_visible(page, patterns)
     if locator is None:
-        raise DingTalkExportError(error_code, "当前钉钉账号没有下载或导出 Excel 的权限")
+        raise DingTalkExportError(error_code, "未找到下载或导出菜单，可能是页面结构变化或账号权限限制，可尝试重新扫码登录")
     locator.click()
 
 

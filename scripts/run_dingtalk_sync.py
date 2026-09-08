@@ -28,6 +28,7 @@ def run(job_id: str) -> int:
         with lock_path.open("w") as task_lock:
             if not _try_lock(task_lock):
                 raise DingTalkExportError("sync_busy", "已有题库同步任务正在执行")
+            _select_browser_profile(jobs_path, job_id)
             update_job(jobs_path, job_id, status="running", stage="launching_browser", message="正在启动浏览器")
             with tempfile.TemporaryDirectory(prefix="olmath-sync-", dir=app.DATABASE_PATH.parent) as temporary_directory:
                 temporary_root = Path(temporary_directory)
@@ -69,6 +70,21 @@ def run(job_id: str) -> int:
     finally:
         shutil.rmtree(artifact_dir, ignore_errors=True)
     return 1
+
+
+def _select_browser_profile(jobs_path: Path, job_id: str) -> None:
+    pointer = jobs_path.parent / "dingtalk-session"
+    if os.getenv("DINGTALK_FORCE_LOGIN") == "1":
+        temporary = pointer.with_suffix(".tmp")
+        temporary.write_text(job_id, encoding="ascii")
+        temporary.chmod(0o600)
+        temporary.replace(pointer)
+    if pointer.exists():
+        session_id = pointer.read_text(encoding="ascii").strip()
+        if len(session_id) != 32 or any(character not in "0123456789abcdef" for character in session_id):
+            raise DingTalkExportError("session_invalid", "钉钉会话配置损坏，请重新扫码登录")
+        base = Path(os.getenv("BROWSER_PROFILE_PATH", "data/browser-profile")).resolve()
+        os.environ["BROWSER_PROFILE_PATH"] = str(base.parent / f"dingtalk-session-{session_id}")
 
 
 def _save_login_screenshot(jobs_path: Path, job_id: str, artifact_dir: Path, payload: bytes) -> None:

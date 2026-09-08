@@ -109,7 +109,7 @@ def update_job(database_path: Path, job_id: str, **changes: Any) -> None:
         )
 
 
-def launch_job(database_path: Path, job_id: str) -> int:
+def launch_job(database_path: Path, job_id: str, reauthenticate: bool = False) -> int:
     log_directory = database_path.parent / "sync-logs"
     log_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor = os.open(log_directory / f"{job_id}.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -121,7 +121,7 @@ def launch_job(database_path: Path, job_id: str) -> int:
             stdout=log,
             stderr=log,
             start_new_session=True,
-            env={**os.environ, "SYNC_JOBS_PATH": str(database_path)},
+            env={**os.environ, "SYNC_JOBS_PATH": str(database_path), "DINGTALK_FORCE_LOGIN": "1" if reauthenticate else "0"},
         )
     update_job(database_path, job_id, pid=process.pid)
     return process.pid
