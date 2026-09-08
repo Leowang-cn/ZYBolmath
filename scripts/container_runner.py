@@ -68,14 +68,19 @@ def export_in_container(destination: Path, callback: Callable[[bytes], None] | N
     with tempfile.TemporaryDirectory(prefix="dingtalk-export-") as directory:
         work = Path(directory)
         prepare_directory(work)
+        export_dir = work / "export"
+        export_dir.mkdir()
+        for name in ("container_export.py", "dingtalk_export.py", "__init__.py"):
+            shutil.copy(scripts / name, export_dir / name)
+            (export_dir / name).chmod(0o644)
+        export_dir.chmod(0o755)
         argv = ["docker", "run", "--rm", "--name", container_name, "--shm-size=1g", "--network", "bridge",
-                "--mount", f"type=bind,src={scripts},dst=/opt/export,readonly",
                 "--mount", f"type=bind,src={work},dst=/work",
                 "--mount", f"type=bind,src={profile},dst=/work/profile"]
         for name in PASS_THROUGH:
             if os.getenv(name):
                 argv.extend(["-e", name])
-        argv.extend([image, "python3", "/opt/export/container_export.py"])
+        argv.extend([image, "python3", "/work/export/container_export.py"])
         process = None
         try:
             with tempfile.TemporaryFile() as output:

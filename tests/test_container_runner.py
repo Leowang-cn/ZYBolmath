@@ -53,6 +53,14 @@ class ContainerResultTest(unittest.TestCase):
                 def launch(command, **kwargs):
                     mount = next(value for value in command if value.startswith("type=bind,src=") and value.endswith(",dst=/work"))
                     work = Path(mount.removeprefix("type=bind,src=").removesuffix(",dst=/work"))
+                    self.assertEqual(command[-1], "/work/export/container_export.py")
+                    self.assertFalse(any("/opt/export" in value for value in command))
+                    export_dir = work / "export"
+                    self.assertEqual(export_dir.stat().st_mode & 0o777, 0o755)
+                    for name in ("container_export.py", "dingtalk_export.py", "__init__.py"):
+                        copied = export_dir / name
+                        self.assertEqual(copied.stat().st_mode & 0o777, 0o644)
+                        self.assertEqual(copied.read_bytes(), (Path(__file__).resolve().parents[1] / "scripts" / name).read_bytes())
                     (work / "login.png").write_bytes(b"qr")
                     (work / "result.json").write_text(json.dumps({"ok": True, "file": "dingtalk-export.xlsx"}))
                     with zipfile.ZipFile(work / "dingtalk-export.xlsx", "w") as archive:
