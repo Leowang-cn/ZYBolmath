@@ -15,6 +15,12 @@ class DingTalkExportError(RuntimeError):
 
 
 def export_workbook(destination: Path, on_login_screenshot: Callable[[bytes], None] | None = None) -> Path:
+    backend = os.getenv("DINGTALK_EXPORT_BACKEND", "local")
+    if backend == "container":
+        from scripts.container_runner import export_in_container
+        return export_in_container(destination, on_login_screenshot)
+    if backend != "local":
+        raise DingTalkExportError("not_configured", "未知的钉钉导出后端")
     document_url = os.getenv("DINGTALK_DOCUMENT_URL", "").strip()
     if not document_url:
         raise DingTalkExportError("not_configured", "服务器尚未配置钉钉文档地址")

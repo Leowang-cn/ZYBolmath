@@ -69,6 +69,7 @@ def create_job(database_path: Path) -> tuple[dict[str, Any], bool]:
 
 def get_job(database_path: Path, job_id: str) -> dict[str, Any] | None:
     initialize_jobs(database_path)
+    expire_jobs(database_path)
     with closing(sqlite3.connect(database_path)) as connection:
         connection.row_factory = sqlite3.Row
         row = connection.execute("SELECT * FROM sync_jobs WHERE id = ?", (job_id,)).fetchone()
@@ -77,10 +78,21 @@ def get_job(database_path: Path, job_id: str) -> dict[str, Any] | None:
 
 def get_current_job(database_path: Path) -> dict[str, Any] | None:
     initialize_jobs(database_path)
+    expire_jobs(database_path)
     with closing(sqlite3.connect(database_path)) as connection:
         connection.row_factory = sqlite3.Row
         row = connection.execute("SELECT * FROM sync_jobs ORDER BY created_at DESC LIMIT 1").fetchone()
     return serialize_job(row) if row else None
+
+
+def expire_jobs(database_path: Path) -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_timeout_seconds())).isoformat()
+    with closing(sqlite3.connect(database_path, timeout=10)) as connection, connection:
+        connection.execute(
+            "UPDATE sync_jobs SET status='failed', stage='failed', error_code='worker_timeout', message=?, updated_at=? "
+            "WHERE status IN ('queued', 'running') AND updated_at < ?",
+            ("同步任务超时或执行进程已退出", utc_now(), cutoff),
+        )
 
 
 def update_job(database_path: Path, job_id: str, **changes: Any) -> None:
@@ -98,15 +110,19 @@ def update_job(database_path: Path, job_id: str, **changes: Any) -> None:
 
 
 def launch_job(database_path: Path, job_id: str) -> int:
-    process = subprocess.Popen(
-        [sys.executable, str(Path(__file__).parent / "scripts/run_dingtalk_sync.py"), job_id],
-        cwd=Path(__file__).parent,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        env={**os.environ, "SYNC_JOBS_PATH": str(database_path)},
-    )
+    log_directory = database_path.parent / "sync-logs"
+    log_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(log_directory / f"{job_id}.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(descriptor, "ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).parent / "scripts/run_dingtalk_sync.py"), job_id],
+            cwd=Path(__file__).parent,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+            env={**os.environ, "SYNC_JOBS_PATH": str(database_path)},
+        )
     update_job(database_path, job_id, pid=process.pid)
     return process.pid
 
