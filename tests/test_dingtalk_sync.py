@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -16,6 +17,37 @@ from tests.test_sync_workbook import write_fixture
 
 
 class DingTalkSyncWorkerTest(unittest.TestCase):
+    def test_menu_does_not_match_team_files(self) -> None:
+        page = MagicMock()
+        candidate = MagicMock()
+
+        def matching_text(pattern):
+            locator = MagicMock()
+            locator.count.return_value = int(bool(pattern.search("团队文件")))
+            locator.nth.return_value = candidate
+            return locator
+
+        page.get_by_text.side_effect = matching_text
+        with self.assertRaises(DingTalkExportError) as caught:
+            _click_first(page, [re.compile("文件")], "export_controls_not_found")
+        self.assertEqual(caught.exception.code, "export_controls_not_found")
+        candidate.click.assert_not_called()
+
+    def test_menu_skips_unclickable_candidate(self) -> None:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        page = MagicMock()
+        blocked = MagicMock()
+        clickable = MagicMock()
+        blocked.click.side_effect = PlaywrightTimeoutError("outside viewport")
+        page.get_by_text.return_value.count.return_value = 2
+        page.get_by_text.return_value.nth.side_effect = [blocked, clickable]
+        _click_first(page, [re.compile("文件")], "export_controls_not_found")
+        pattern = page.get_by_text.call_args.args[0]
+        self.assertIsNotNone(pattern.search(" 文件 "))
+        blocked.click.assert_called_once_with(timeout=2_000)
+        clickable.click.assert_called_once_with(timeout=2_000)
+
     def test_login_and_qr_inside_frame(self) -> None:
         page = MagicMock()
         page.url = "https://alidocs.dingtalk.com/i/desktop/recent"

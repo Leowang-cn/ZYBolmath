@@ -183,10 +183,21 @@ def _first_visible(page: object, patterns: list[re.Pattern[str]]) -> object | No
 
 
 def _click_first(page: object, patterns: list[re.Pattern[str]], error_code: str) -> None:
-    locator = _first_visible(page, patterns)
-    if locator is None:
-        raise DingTalkExportError(error_code, "未找到下载或导出菜单，可能是页面结构变化或账号权限限制，可尝试重新扫码登录")
-    locator.click()
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    for pattern in patterns:
+        exact_pattern = re.compile(r"^\s*(?:" + pattern.pattern + r")\s*$", pattern.flags)
+        locator = page.get_by_text(exact_pattern)
+        for index in range(locator.count()):
+            candidate = locator.nth(index)
+            if not candidate.is_visible():
+                continue
+            try:
+                candidate.click(timeout=2_000)
+                return
+            except PlaywrightTimeoutError:
+                continue
+    raise DingTalkExportError(error_code, "未找到可点击的下载或导出菜单，可能是页面结构变化或账号权限限制，可尝试重新扫码登录")
 
 
 def _positive_int(name: str, default: int) -> int:

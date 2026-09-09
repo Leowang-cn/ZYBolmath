@@ -30,6 +30,10 @@ NS = {
 }
 FORWARD_FILL_COLUMNS = tuple("ABCDEF")
 SYNC_RULES_VERSION = 2
+TARGET_HEADERS = (
+    "年级", "学季", "讲次", "讲次名", "拆解人", "状态", "题型", "是否要", "知识点名称", "描述",
+    "示例题目", "培优层级", "奥数层级", "竞赛层级", "板书资料", "审核人", "审核建议记录", "备注", "链接",
+)
 
 
 @dataclass(frozen=True)
@@ -242,6 +246,16 @@ def parse_workbook(workbook: zipfile.ZipFile) -> list[ParsedSheet]:
     return sheets
 
 
+def matching_target_sheets(sheets: list[ParsedSheet]) -> list[ParsedSheet]:
+    """Return sheets whose first row exactly matches the import contract."""
+    return [
+        sheet
+        for sheet in sheets
+        if tuple(sheet.rows.get(1, {}).get(f"{column}{1}", "") for column in (column_name(index) for index in range(1, len(TARGET_HEADERS) + 1)))
+        == TARGET_HEADERS
+    ]
+
+
 def initialize_database(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
@@ -302,7 +316,20 @@ def stable_hash(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def sync_workbook(source_path: Path, database_path: Path, asset_store: AssetStore) -> dict[str, int | bool | str]:
+def inspect_workbook(source_path: Path) -> list[dict[str, int | str]]:
+    with zipfile.ZipFile(source_path) as workbook:
+        return [
+            {"sheet_id": sheet.sheet_id, "name": sheet.name, "position": sheet.position, "rows": len(sheet.rows), "images": len(sheet.images)}
+            for sheet in matching_target_sheets(parse_workbook(workbook))
+        ]
+
+
+def sync_workbook(
+    source_path: Path,
+    database_path: Path,
+    asset_store: AssetStore,
+    selected_sheet_id: str | None = None,
+) -> dict[str, int | bool | str]:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with source_path.open("rb") as source:
         source_hash = sha256_stream(source)
@@ -337,6 +364,16 @@ def sync_workbook(source_path: Path, database_path: Path, asset_store: AssetStor
     try:
         with zipfile.ZipFile(source_path) as workbook:
             sheets = parse_workbook(workbook)
+            target_sheets = matching_target_sheets(sheets)
+            if not target_sheets:
+                raise ValueError("未找到表头完全匹配的工作表")
+            if selected_sheet_id is None and len(target_sheets) > 1:
+                raise ValueError("匹配到多个工作表，请选择一个")
+            selected_sheet_id = selected_sheet_id or target_sheets[0].sheet_id
+            selected = next((sheet for sheet in target_sheets if sheet.sheet_id == selected_sheet_id), None)
+            if selected is None:
+                raise ValueError("选择的工作表不是有效的目标工作表")
+            sheets = [selected]
             active_sheet_ids = {sheet.sheet_id for sheet in sheets}
             for sheet in sheets:
                 image_metadata: dict[int, list[tuple[int, int, str]]] = {}

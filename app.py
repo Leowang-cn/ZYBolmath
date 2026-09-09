@@ -12,6 +12,7 @@ import sqlite3
 import tarfile
 import tempfile
 import fcntl
+import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,12 +21,14 @@ from typing import Any, Iterator
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory, session
 
 from sync_jobs import create_job, get_current_job, get_job, launch_job
+from scripts.sync_workbook import LocalAssetStore, inspect_workbook, sync_workbook
 
 
 ROOT = Path(__file__).resolve().parent
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", ROOT / "data/app.sqlite"))
 ASSET_DIR = Path(os.getenv("ASSET_DIR", ROOT / "data/assets"))
 TARGET_SHEET = os.getenv("TARGET_SHEET", "三四年级新大纲")
+ACTIVE_TARGET_SHEET = TARGET_SHEET
 FILTER_COLUMNS = tuple("ABCDGHLMNOP")
 VISIBLE_COLUMNS = tuple("ABCDEFGH") + tuple("LMNOPQRSTU")
 ALL_COLUMNS = tuple("ABCDEFGHIJKLMNOPQRSTU")
@@ -134,6 +137,56 @@ def create_app() -> Flask:
             return jsonify(error=f"导入失败：{error}"), 400
         return jsonify(ok=True, **result)
 
+    @app.post("/api/data/workbook/inspect")
+    def inspect_data_workbook() -> Response:
+        auth_error = require_editor()
+        if auth_error:
+            return auth_error
+        uploaded = request.files.get("workbook")
+        if uploaded is None or not uploaded.filename:
+            return jsonify(error="请选择 Excel 工作簿"), 400
+        try:
+            with tempfile.NamedTemporaryFile(dir=DATABASE_PATH.parent, suffix=".xlsx") as temporary:
+                uploaded.save(temporary.name)
+                sheets = inspect_workbook(Path(temporary.name))
+        except (ValueError, OSError, zipfile.BadZipFile) as error:
+            return jsonify(error=f"Excel 文件校验失败：{error}"), 400
+        if not sheets:
+            return jsonify(error="未找到表头完全匹配的工作表"), 400
+        return jsonify(sheets=sheets)
+
+    @app.post("/api/data/workbook/import")
+    def import_data_workbook() -> Response:
+        auth_error = require_editor()
+        if auth_error:
+            return auth_error
+        uploaded = request.files.get("workbook")
+        selected_sheet_id = request.form.get("sheet_id") or None
+        if uploaded is None or not uploaded.filename:
+            return jsonify(error="请选择 Excel 工作簿"), 400
+        try:
+            with tempfile.NamedTemporaryFile(dir=DATABASE_PATH.parent, suffix=".xlsx") as temporary:
+                uploaded.save(temporary.name)
+                candidates = inspect_workbook(Path(temporary.name))
+                if len(candidates) > 1 and not selected_sheet_id:
+                    return jsonify(error="匹配到多个工作表，请选择一个", sheets=candidates), 409
+                if selected_sheet_id and selected_sheet_id not in {str(sheet["sheet_id"]) for sheet in candidates}:
+                    return jsonify(error="选择的工作表不是有效的目标工作表"), 400
+                lock_path = DATABASE_PATH.parent / ".data-import.lock"
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                with lock_path.open("w") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    result = sync_workbook(Path(temporary.name), DATABASE_PATH, LocalAssetStore(ASSET_DIR), selected_sheet_id)
+                    global ACTIVE_TARGET_SHEET
+                    imported_sheet_id = selected_sheet_id or str(candidates[0]["sheet_id"])
+                    ACTIVE_TARGET_SHEET = next(
+                        sheet["name"] for sheet in candidates
+                        if str(sheet["sheet_id"]) == imported_sheet_id
+                    )
+        except (ValueError, OSError, sqlite3.Error, zipfile.BadZipFile) as error:
+            return jsonify(error=f"Excel 导入失败：{error}"), 400
+        return jsonify(ok=True, **result)
+
     @app.post("/api/data/sync")
     def start_data_sync() -> Response:
         auth_error = require_editor()
@@ -198,9 +251,10 @@ def create_app() -> Flask:
         with get_connection() as connection:
             if not table_exists(connection, "sheets"):
                 return jsonify(error="题库数据尚未导入，请上传 data/app.sqlite 和 data/assets"), 503
-            sheet = connection.execute("SELECT sheet_id, name FROM sheets WHERE name = ?", (TARGET_SHEET,)).fetchone()
+            sheet_id = get_target_sheet_id(connection)
+            sheet = connection.execute("SELECT sheet_id, name FROM sheets WHERE sheet_id = ?", (sheet_id,)).fetchone()
             if sheet is None:
-                return jsonify(error=f"未找到工作表：{TARGET_SHEET}"), 404
+                return jsonify(error=f"未找到工作表：{ACTIVE_TARGET_SHEET}"), 404
             headers = load_headers(connection, sheet["sheet_id"])
             result = load_records(connection, sheet["sheet_id"], headers)
         return jsonify(
@@ -522,7 +576,9 @@ def replace_imported_data(imported_database: Path, imported_assets: Path) -> Non
 
 
 def get_target_sheet_id(connection: sqlite3.Connection) -> str | None:
-    row = connection.execute("SELECT sheet_id FROM sheets WHERE name = ?", (TARGET_SHEET,)).fetchone()
+    row = connection.execute("SELECT sheet_id FROM sheets WHERE name = ?", (ACTIVE_TARGET_SHEET,)).fetchone()
+    if row is None and ACTIVE_TARGET_SHEET != TARGET_SHEET:
+        row = connection.execute("SELECT sheet_id FROM sheets WHERE name = ?", (TARGET_SHEET,)).fetchone()
     return row["sheet_id"] if row else None
 
 

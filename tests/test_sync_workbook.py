@@ -55,31 +55,43 @@ DRAWING_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def write_fixture(path: Path, first_value: str, include_second_row: bool) -> None:
-    second_row = '<row r="2"><c r="A2" t="inlineStr"><is><t>第二行</t></is></c></row>' if include_second_row else ""
-    sheet_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+  headers = "".join(
+    f'<c r="{sync_workbook.column_name(index)}1" t="inlineStr"><is><t>{value}</t></is></c>'
+    for index, value in enumerate(sync_workbook.TARGET_HEADERS, 1)
+  )
+  second_row = f'<row r="2"><c r="A2" t="inlineStr"><is><t>{first_value}</t></is></c></row>' if include_second_row else ""
+  sheet_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>{first_value}</t></is></c></row>{second_row}</sheetData>
+  <sheetData><row r="1">{headers}</row>{second_row}</sheetData>
   <drawing r:id="rId1"/>
 </worksheet>"""
-    drawing_xml = DRAWING_XML if include_second_row else DRAWING_XML.replace(
+  drawing_xml = DRAWING_XML if include_second_row else DRAWING_XML.replace(
         '<xdr:oneCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:row>1</xdr:row></xdr:from>\n'
         '    <xdr:pic><xdr:blipFill><a:blip r:embed="rId2"/></xdr:blipFill></xdr:pic><xdr:clientData/>\n'
         '  </xdr:oneCellAnchor>\n',
         "",
     )
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("xl/workbook.xml", WORKBOOK_XML)
-        archive.writestr("xl/_rels/workbook.xml.rels", WORKBOOK_RELS)
-        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
-        archive.writestr("xl/worksheets/_rels/sheet1.xml.rels", SHEET_RELS)
-        archive.writestr("xl/drawings/drawing1.xml", drawing_xml)
-        archive.writestr("xl/drawings/_rels/drawing1.xml.rels", DRAWING_RELS)
-        archive.writestr("xl/media/image1.png", b"same-image-content")
-        archive.writestr("xl/media/image2.png", b"same-image-content")
+  with zipfile.ZipFile(path, "w") as archive:
+    archive.writestr("xl/workbook.xml", WORKBOOK_XML)
+    archive.writestr("xl/_rels/workbook.xml.rels", WORKBOOK_RELS)
+    archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    archive.writestr("xl/worksheets/_rels/sheet1.xml.rels", SHEET_RELS)
+    archive.writestr("xl/drawings/drawing1.xml", drawing_xml)
+    archive.writestr("xl/drawings/_rels/drawing1.xml.rels", DRAWING_RELS)
+    archive.writestr("xl/media/image1.png", b"same-image-content")
+    archive.writestr("xl/media/image2.png", b"same-image-content")
 
 
 class SyncWorkbookTest(unittest.TestCase):
+  def test_matching_target_sheets_requires_exact_headers(self) -> None:
+    target = sync_workbook.TARGET_HEADERS
+    matching = sync_workbook.ParsedSheet("1", "目标", 1, {1: {f"{sync_workbook.column_name(index)}1": value for index, value in enumerate(target, 1)}}, [])
+    incomplete = sync_workbook.ParsedSheet("2", "不匹配", 2, {1: {"A1": "年级"}}, [])
+
+    self.assertEqual([matching], sync_workbook.matching_target_sheets([matching, incomplete]))
+    self.assertEqual([], sync_workbook.matching_target_sheets([incomplete]))
+
   def test_forward_fills_a_to_f_without_using_headers(self) -> None:
     rows = {
       1: {"A1": "年级", "B1": "学季"},
@@ -116,17 +128,17 @@ class SyncWorkbookTest(unittest.TestCase):
       self.assertTrue(unchanged["skipped"])
       self.assertEqual(unchanged["rows_changed"], 0)
 
-      write_fixture(source, "修改值", include_second_row=False)
+      write_fixture(source, "修改值", include_second_row=True)
       changed = sync_workbook.sync_workbook(source, database, store)
       self.assertFalse(changed["skipped"])
       self.assertEqual(changed["rows_changed"], 1)
-      self.assertEqual(changed["rows_deleted"], 1)
+      self.assertEqual(changed["rows_deleted"], 0)
       self.assertEqual(changed["assets_uploaded"], 0)
 
       with closing(sqlite3.connect(database)) as connection:
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM assets").fetchone()[0], 1)
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM cell_images").fetchone()[0], 1)
-        self.assertEqual(connection.execute("SELECT value FROM cells WHERE cell_ref = 'A1'").fetchone()[0], "修改值")
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM cell_images").fetchone()[0], 2)
+        self.assertEqual(connection.execute("SELECT value FROM cells WHERE cell_ref = 'A2'").fetchone()[0], "修改值")
 
   def test_creates_browser_import_archive(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:
