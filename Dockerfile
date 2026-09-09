@@ -14,7 +14,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
+RUN python -m playwright install --with-deps chromium
 COPY app.py ./
+COPY sync_jobs.py ./
 COPY scripts ./scripts
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 RUN mkdir -p data/assets

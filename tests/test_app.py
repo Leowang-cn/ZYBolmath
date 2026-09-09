@@ -8,8 +8,10 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 import app as app_module
+from sync_jobs import create_job, update_job
 
 
 class AppApiTest(unittest.TestCase):
@@ -21,6 +23,8 @@ class AppApiTest(unittest.TestCase):
         app_module.DATABASE_PATH = root / "app.sqlite"
         app_module.ASSET_DIR = root / "assets"
         os.environ["EDITOR_PASSWORD"] = "test-password"
+        os.environ.pop("DINGTALK_DOCUMENT_URL", None)
+        os.environ["SYNC_JOBS_PATH"] = str(root / "sync-jobs.sqlite")
         self.seed_database()
         application = app_module.create_app()
         application.config.update(TESTING=True, SECRET_KEY="test-secret")
@@ -30,6 +34,8 @@ class AppApiTest(unittest.TestCase):
         app_module.DATABASE_PATH = self.original_database
         app_module.ASSET_DIR = self.original_asset_dir
         os.environ.pop("EDITOR_PASSWORD", None)
+        os.environ.pop("DINGTALK_DOCUMENT_URL", None)
+        os.environ.pop("SYNC_JOBS_PATH", None)
         self.temporary_directory.cleanup()
 
     def seed_database(self) -> None:
@@ -61,6 +67,55 @@ class AppApiTest(unittest.TestCase):
         self.assertEqual(records[0]["title"], "巧求周长")
         self.assertEqual(self.client.patch("/api/records/2", json={"values": {"A": "四年级"}}).status_code, 401)
         self.assertEqual(self.client.post("/api/auth/login", json={"password": "wrong"}).status_code, 401)
+
+    def test_sync_requires_authentication_and_configuration(self) -> None:
+        self.assertEqual(self.client.post("/api/data/sync").status_code, 401)
+        self.login()
+        response = self.client.post("/api/data/sync")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("尚未配置", response.get_json()["error"])
+
+    def test_sync_starts_one_persistent_job(self) -> None:
+        self.login()
+        os.environ["DINGTALK_DOCUMENT_URL"] = "https://alidocs.dingtalk.com/example"
+        with patch("app.launch_job", return_value=12345) as launch:
+            first = self.client.post("/api/data/sync")
+            second = self.client.post("/api/data/sync")
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(launch.call_count, 1)
+        job = first.get_json()["job"]
+        self.assertEqual(job["status"], "queued")
+        self.assertEqual(self.client.get(f"/api/data/sync/{job['id']}").get_json()["job"]["id"], job["id"])
+        self.assertEqual(self.client.get("/api/data/sync/current").get_json()["job"]["id"], job["id"])
+
+    def test_sync_reauthentication_is_authorized_and_exclusive(self) -> None:
+        self.assertEqual(self.client.post("/api/data/sync", json={"reauthenticate": True}).status_code, 401)
+        self.login()
+        os.environ["DINGTALK_DOCUMENT_URL"] = "https://alidocs.dingtalk.com/example"
+        self.assertEqual(self.client.post("/api/data/sync", json={"reauthenticate": "true"}).status_code, 400)
+        with patch("app.launch_job", return_value=12345) as launch:
+            response = self.client.post("/api/data/sync", json={"reauthenticate": True})
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(self.client.post("/api/data/sync", json={"reauthenticate": True}).status_code, 409)
+            launch.assert_called_once_with(Path(os.environ["SYNC_JOBS_PATH"]), response.get_json()["job"]["id"], reauthenticate=True)
+
+    def test_login_screenshot_requires_authentication_and_disables_cache(self) -> None:
+        jobs_path = Path(os.environ["SYNC_JOBS_PATH"])
+        job, _ = create_job(jobs_path)
+        screenshot_path = app_module.DATABASE_PATH.parent / "sync-artifacts" / job["id"] / "login.png"
+        screenshot_path.parent.mkdir(parents=True)
+        screenshot_path.write_bytes(b"fake-png")
+        update_job(jobs_path, job["id"], status="running", stage="awaiting_login", message="请扫码")
+
+        self.assertEqual(self.client.get(f"/api/data/sync/{job['id']}/login.png").status_code, 401)
+        self.login()
+        response = self.client.get(f"/api/data/sync/{job['id']}/login.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"fake-png")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        response.close()
 
     def test_reports_missing_seed_data(self) -> None:
         app_module.DATABASE_PATH.unlink()
