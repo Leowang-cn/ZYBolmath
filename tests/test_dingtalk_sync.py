@@ -10,12 +10,37 @@ from unittest.mock import MagicMock, patch
 
 import app
 from scripts import run_dingtalk_sync
-from scripts.dingtalk_export import DingTalkExportError, _check_document_access, _click_first
+from scripts.dingtalk_export import DingTalkExportError, _check_document_access, _click_first, _login_required, _capture_login_screenshot, _wait_for_login
 from sync_jobs import create_job, get_job
 from tests.test_sync_workbook import write_fixture
 
 
 class DingTalkSyncWorkerTest(unittest.TestCase):
+    def test_login_and_qr_inside_frame(self) -> None:
+        page = MagicMock()
+        page.url = "https://alidocs.dingtalk.com/i/desktop/recent"
+        frame = MagicMock()
+        page.frames = [frame]
+        page.get_by_text.return_value.count.return_value = 0
+        frame.get_by_text.return_value.count.return_value = 1
+        frame.get_by_text.return_value.nth.return_value.is_visible.return_value = True
+        page.locator.return_value.count.return_value = 0
+        frame.locator.return_value.count.return_value = 1
+        frame.locator.return_value.nth.return_value.is_visible.return_value = True
+        frame.locator.return_value.nth.return_value.screenshot.return_value = b"frame-qr"
+        self.assertTrue(_login_required(page))
+        self.assertEqual(_capture_login_screenshot(page), b"frame-qr")
+
+    def test_transient_login_prompt_disappearance_does_not_finish(self) -> None:
+        page = MagicMock()
+        callback = MagicMock()
+        with patch("scripts.dingtalk_export._login_required", side_effect=[False, True, False, False, False]), \
+                patch("scripts.dingtalk_export._capture_login_screenshot", return_value=b"qr"):
+            _wait_for_login(page, "https://example.com/doc", callback)
+        self.assertEqual(page.wait_for_timeout.call_count, 6)
+        callback.assert_called_once_with(b"qr")
+        page.goto.assert_called_once()
+
     def test_new_session_preserves_old_profile_and_is_reused(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ):
             root = Path(directory)

@@ -113,8 +113,13 @@ def _check_document_access(page: object) -> None:
 
 def _login_required(page: object) -> bool:
     url = str(getattr(page, "url", ""))
-    login_prompt = _first_visible(page, [re.compile(r"扫码登录|手机号登录|密码登录", re.IGNORECASE)])
-    return bool(re.search(r"(?:login|signin)", url, re.IGNORECASE) or login_prompt is not None)
+    if re.search(r"(?:login|signin)", url, re.IGNORECASE):
+        return True
+    for scope in [page, *getattr(page, "frames", [])]:
+        login_prompt = _first_visible(scope, [re.compile(r"扫码登录|扫码登陆|手机号登录|密码登录|钉钉扫码", re.IGNORECASE)])
+        if login_prompt is not None:
+            return True
+    return False
 
 
 def _wait_for_login(
@@ -124,6 +129,7 @@ def _wait_for_login(
 ) -> None:
     timeout_ms = _positive_int("DINGTALK_LOGIN_TIMEOUT_MS", 5 * 60_000)
     elapsed_ms = 0
+    logged_in_checks = 0
     screenshot_interval_ms = 5_000
     while elapsed_ms < timeout_ms:
         if on_login_screenshot is not None and elapsed_ms % screenshot_interval_ms == 0:
@@ -133,9 +139,13 @@ def _wait_for_login(
         page.wait_for_timeout(1_000)
         elapsed_ms += 1_000
         if not _login_required(page):
-            page.goto(document_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            page.wait_for_timeout(2_000)
-            return
+            logged_in_checks += 1
+            if logged_in_checks >= 3:
+                page.goto(document_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                page.wait_for_timeout(2_000)
+                return
+        else:
+            logged_in_checks = 0
     raise DingTalkExportError("login_timeout", "等待钉钉扫码登录超时，请重新发起更新")
 
 
@@ -146,12 +156,13 @@ def _capture_login_screenshot(page: object) -> bytes | None:
         "img[src*='qr']",
         "canvas",
     )
-    for selector in selectors:
-        locator = page.locator(selector)
-        for index in range(locator.count()):
-            candidate = locator.nth(index)
-            if candidate.is_visible():
-                return candidate.screenshot(type="png")
+    for scope in [page, *getattr(page, "frames", [])]:
+        for selector in selectors:
+            locator = scope.locator(selector)
+            for index in range(locator.count()):
+                candidate = locator.nth(index)
+                if candidate.is_visible():
+                    return candidate.screenshot(type="png")
     return None
 
 
