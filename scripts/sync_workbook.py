@@ -401,11 +401,16 @@ def sync_workbook(
                 old_sheet = connection.execute("SELECT content_hash FROM sheets WHERE sheet_id = ?", (sheet.sheet_id,)).fetchone()
                 if old_sheet is None or old_sheet["content_hash"] != sheet_hash:
                     stats["sheets_changed"] = int(stats["sheets_changed"]) + 1
-                connection.execute(
-                    "INSERT INTO sheets(sheet_id, name, position, content_hash, updated_at) VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT(sheet_id) DO UPDATE SET name=excluded.name, position=excluded.position, content_hash=excluded.content_hash, updated_at=excluded.updated_at",
-                    (sheet.sheet_id, sheet.name, sheet.position, sheet_hash, now),
-                )
+                if old_sheet is None:
+                    connection.execute(
+                        "INSERT INTO sheets(sheet_id, name, position, content_hash, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (sheet.sheet_id, sheet.name, sheet.position, sheet_hash, now),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE sheets SET name = ?, position = ?, content_hash = ?, updated_at = ? WHERE sheet_id = ?",
+                        (sheet.name, sheet.position, sheet_hash, now, sheet.sheet_id),
+                    )
 
                 current_rows = set(sheet.rows) | set(image_metadata)
                 existing_rows = {
@@ -419,11 +424,16 @@ def sync_workbook(
                     if existing_rows.get(row_number) == row_hash:
                         continue
                     stats["rows_changed"] = int(stats["rows_changed"]) + 1
-                    connection.execute(
-                        "INSERT INTO rows(sheet_id, row_number, row_hash, updated_at) VALUES (?, ?, ?, ?) "
-                        "ON CONFLICT(sheet_id, row_number) DO UPDATE SET row_hash=excluded.row_hash, updated_at=excluded.updated_at",
-                        (sheet.sheet_id, row_number, row_hash, now),
-                    )
+                    if row_number not in existing_rows:
+                        connection.execute(
+                            "INSERT INTO rows(sheet_id, row_number, row_hash, updated_at) VALUES (?, ?, ?, ?)",
+                            (sheet.sheet_id, row_number, row_hash, now),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE rows SET row_hash = ?, updated_at = ? WHERE sheet_id = ? AND row_number = ?",
+                            (row_hash, now, sheet.sheet_id, row_number),
+                        )
                     connection.execute("DELETE FROM cells WHERE sheet_id = ? AND row_number = ?", (sheet.sheet_id, row_number))
                     connection.executemany(
                         "INSERT INTO cells(sheet_id, row_number, cell_ref, value) VALUES (?, ?, ?, ?)",
