@@ -75,6 +75,15 @@ class AppApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("尚未配置", response.get_json()["error"])
 
+    def test_records_exposes_persisted_import_time(self) -> None:
+        imported_at = "2026-09-09T03:04:05+00:00"
+        with closing(sqlite3.connect(app_module.DATABASE_PATH)) as connection, connection:
+            connection.execute("UPDATE sheets SET updated_at = ?", (imported_at,))
+        self.assertEqual(self.client.get("/api/records").get_json()["updatedAt"], imported_at)
+        self.login()
+        self.client.patch("/api/records/2", json={"values": {"A": "四年级"}})
+        self.assertEqual(self.client.get("/api/records").get_json()["updatedAt"], imported_at)
+
     def test_sync_starts_one_persistent_job(self) -> None:
         self.login()
         os.environ["DINGTALK_DOCUMENT_URL"] = "https://alidocs.dingtalk.com/example"

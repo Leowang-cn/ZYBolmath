@@ -86,6 +86,7 @@ function App() {
         query={query} setQuery={setQuery} total={data.records.length} shown={records.length}
         authenticated={authenticated} onLogin={() => setLoginOpen(true)}
         onDataImport={() => setDataImportOpen(true)}
+        updatedAt={data.updatedAt}
         onLogout={async () => { await api('/api/auth/logout', { method: 'POST' }); setAuthenticated(false) }}
       />
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="关闭"><X size={16} /></button></div>}
@@ -219,8 +220,14 @@ function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, mod
   return modal ? panel : <main className="data-import-page">{panel}</main>
 }
 
-function FilterBar({ headers, filters, setFilters, options, query, setQuery, total, shown, authenticated, onLogin, onDataImport, onLogout }) {
+function FilterBar({ headers, filters, setFilters, options, query, setQuery, total, shown, authenticated, onLogin, onDataImport, onLogout, updatedAt }) {
   const active = Object.values(filters).filter((value) => Array.isArray(value) ? value.length > 0 : Boolean(value)).length + (query ? 1 : 0)
+  const updatedDate = updatedAt ? new Date(updatedAt) : null
+  const validDate = updatedDate && !Number.isNaN(updatedDate.getTime())
+  const updatedLabel = validDate ? new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).format(updatedDate) : '暂无记录'
   return (
     <header className="filter-bar">
       <div className="brand"><div className="brand-mark">π</div><div><strong>奥数大纲题库</strong><span>{shown} / {total} 条</span></div></div>
@@ -246,6 +253,10 @@ function FilterBar({ headers, filters, setFilters, options, query, setQuery, tot
       <div className="header-actions">
         {active > 0 && <button className="icon-command" onClick={() => { setFilters({}); setQuery('') }} title="清除筛选"><RotateCcw size={17} /><span>{active}</span></button>}
         {authenticated && <button className="auth-button" onClick={onDataImport}><Upload size={16} />更新题库</button>}
+        <div className="import-time" title="当前题库数据的导入更新时间（北京时间）">
+          <span>数据更新于</span>
+          <time dateTime={validDate ? updatedAt : undefined}>{updatedLabel}</time>
+        </div>
         <button className={authenticated ? 'auth-button active' : 'auth-button'} onClick={authenticated ? onLogout : onLogin}>
           {authenticated ? <LogOut size={16} /> : <LockKeyhole size={16} />}{authenticated ? '退出编辑' : '编辑登录'}
         </button>

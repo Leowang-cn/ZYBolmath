@@ -252,13 +252,14 @@ def create_app() -> Flask:
             if not table_exists(connection, "sheets"):
                 return jsonify(error="题库数据尚未导入，请上传 data/app.sqlite 和 data/assets"), 503
             sheet_id = get_target_sheet_id(connection)
-            sheet = connection.execute("SELECT sheet_id, name FROM sheets WHERE sheet_id = ?", (sheet_id,)).fetchone()
+            sheet = connection.execute("SELECT sheet_id, name, updated_at FROM sheets WHERE sheet_id = ?", (sheet_id,)).fetchone()
             if sheet is None:
                 return jsonify(error=f"未找到工作表：{ACTIVE_TARGET_SHEET}"), 404
             headers = load_headers(connection, sheet["sheet_id"])
             result = load_records(connection, sheet["sheet_id"], headers)
         return jsonify(
             sheet={"id": sheet["sheet_id"], "name": sheet["name"]},
+            updatedAt=sheet["updated_at"],
             headers=headers,
             filterColumns=list(FILTER_COLUMNS),
             visibleColumns=list(VISIBLE_COLUMNS),

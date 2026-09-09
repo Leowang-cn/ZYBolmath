@@ -39,7 +39,12 @@ button:disabled { cursor: default; opacity: .35; }
 .level-filter-title { padding-right: 10px; border-right: 1px solid #e0e1da; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .level-filter label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .level-filter input { margin: 0; accent-color: var(--green); }
-.header-actions { display: flex; justify-content: flex-end; align-items: flex-start; gap: 7px; }
+.header-actions { display: flex; flex-wrap: wrap; align-content: flex-start; justify-content: flex-end; align-items: flex-start; gap: 7px; }
+.header-actions > .icon-command, .header-actions > .auth-button.active { order: 1; }
+.header-actions > .auth-button:has(svg.lucide-upload) { order: 2; }
+.import-time { margin-right: auto; flex: 0 0 145px; min-height: 34px; color: var(--muted); font-size: 11px; line-height: 17px; }
+.import-time span, .import-time time { display: block; white-space: nowrap; }
+.import-time time { font-variant-numeric: tabular-nums; }
 .auth-button, .icon-command { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #bfc3bb; border-radius: 4px; background: white; color: var(--ink); font-size: 12px; }
 .auth-button { padding: 0 10px; }
 .auth-button.active { color: var(--green); border-color: #8eac9c; background: var(--green-light); }
