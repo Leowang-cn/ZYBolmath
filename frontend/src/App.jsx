@@ -77,7 +77,7 @@ function App() {
 
   if (loading) return <div className="loading"><span className="loading-mark">π</span><p>正在载入题库…</p></div>
   if (importNeeded) return <DataImport authenticated={authenticated} onAuthenticated={() => setAuthenticated(true)} onComplete={load} />
-  if (!data) return <div className="loading"><span className="loading-mark">π</span><p>{notice || '题库载入失败'}</p><button onClick={load}>重新加载</button></div>
+  if (!data) return <DataImport authenticated={authenticated} onAuthenticated={() => setAuthenticated(true)} onComplete={load} recoveryError={notice || '题库载入失败'} />
 
   return (
     <main className="app-shell">
@@ -120,7 +120,7 @@ function App() {
   )
 }
 
-function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, modal = false, onClose }) {
+function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, modal = false, onClose, recoveryError = '' }) {
   const [password, setPassword] = useState('')
   const [mode, setMode] = useState('workbook')
   const [file, setFile] = useState(null)
@@ -202,8 +202,9 @@ function DataImport({ authenticated, onAuthenticated = () => {}, onComplete, mod
   const panel = <form className="data-import-panel" onSubmit={submit}>
       {modal && <button className="dialog-close" type="button" onClick={onClose} aria-label="关闭"><X size={19} /></button>}
       <div className="brand-mark">π</div>
-      <div><span className="setup-label">{modal ? '管理员操作' : '首次初始化'}</span><h1>{modal ? '更新奥数题库' : '导入奥数题库'}</h1></div>
-      <p>{modal ? '导入新版数据包。网页中修改的字段和图片会继续保留。' : '当前服务器尚无题库数据。使用管理员密码验证后，导入完整数据压缩包。'}</p>
+      <div><span className="setup-label">{modal || recoveryError ? '管理员操作' : '首次初始化'}</span><h1>{modal ? '更新奥数题库' : recoveryError ? '恢复奥数题库' : '导入奥数题库'}</h1></div>
+      <p>{modal ? '导入新版数据包。网页中修改的字段和图片会继续保留。' : recoveryError ? '当前题库无法载入，请验证管理员密码后重新导入 Excel 或完整数据压缩包。' : '当前服务器尚无题库数据。使用管理员密码验证后，导入完整数据压缩包。'}</p>
+      {recoveryError && <div className="form-error" role="alert">{recoveryError}</div>}
       {!authenticated && <label className="setup-field"><span>管理员密码</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>}
       <div className="import-modes"><button type="button" className={mode === 'workbook' ? 'active' : ''} onClick={() => { setMode('workbook'); setFile(null); setSheets([]) }}>上传 Excel 表格</button><button type="button" className={mode === 'archive' ? 'active' : ''} onClick={() => { setMode('archive'); setFile(null); setSheets([]) }}>上传题库压缩包</button></div>
       <label className="archive-picker">
